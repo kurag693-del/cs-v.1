@@ -191,3 +191,33 @@ export async function logoutUser() {
   revalidatePath('/', 'layout')
   redirect('/login')
 }
+
+export async function signInWithEmail(email: string, password: string) {
+  const formData = new FormData()
+  formData.set('email', email)
+  formData.set('password', password)
+
+  const result = await loginUser(formData)
+  if (!result.success || !result.session) {
+    return {
+      success: false as const,
+      error: result.error ?? 'Не удалось выполнить вход',
+    }
+  }
+
+  return {
+    success: true as const,
+    user: {
+      id: result.session.user.id,
+      email: result.session.user.email ?? '',
+    },
+    session: result.session,
+  }
+}
+
+export async function signOut() {
+  const supabase = createServerClient()
+  await supabase.auth.signOut()
+  revalidatePath('/', 'layout')
+  return { success: true as const }
+}

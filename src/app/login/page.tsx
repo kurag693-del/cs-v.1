@@ -1,105 +1,136 @@
-'use client'
+"use client";
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useState } from "react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
+
+import { signInWithEmail } from "@/lib/auth/actions";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+function createLocalAccessToken(userId: string): string {
+  const base64Url = (value: string) =>
+    btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+  const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
+  const payload = base64Url(JSON.stringify({ sub: userId }));
+  return `${header}.${payload}.local`;
+}
 
 export default function LoginPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
-      const result = await response.json()
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccess(false);
 
-      if (result.success && result.data?.session) {
-        // Set cookies for middleware
-        const session = result.data.session
-        document.cookie = `sb-access-token=${session.access_token}; path=/; max-age=${session.expires_in || 3600}; samesite=lax`
-        document.cookie = `sb-refresh-token=${session.refresh_token}; path=/; max-age=${60 * 60 * 24 * 7 * 4}; samesite=lax`
-        if (session.user?.id && session.user?.email) {
-          window.localStorage.setItem(
-            'local-auth-user',
-            JSON.stringify({ id: session.user.id, email: session.user.email })
-          )
-        }
+    const result = await signInWithEmail(email, password);
 
-        router.push('/dashboard')
-        router.refresh()
-      } else {
-        setError(result.error?.message || 'Login failed')
-      }
-    } catch {
-      setError('Network error while logging in')
-    } finally {
-      setLoading(false)
+    if (!result.success) {
+      setError(result.error);
+      setLoading(false);
+      return;
     }
-  }
+
+    const userId = result.user.id;
+    const accessToken = createLocalAccessToken(userId);
+    document.cookie = `sb-access-token=${accessToken}; path=/; max-age=${60 * 60 * 24}; samesite=lax`;
+    localStorage.setItem(
+      "local-auth-user",
+      JSON.stringify({ id: result.user.id, email: result.user.email ?? email })
+    );
+
+    setSuccess(true);
+    setLoading(false);
+    window.location.assign("/dashboard");
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-2xl text-center">Welcome Back</CardTitle>
-          <CardDescription className="text-center">
-            Sign in to your Креатив-студия account
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-              />
+    <div className="min-h-screen bg-background p-4 md:p-8">
+      <div className="mx-auto grid min-h-[calc(100vh-2rem)] max-w-6xl items-center gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="hidden rounded-3xl border-border bg-card lg:block">
+          <CardContent className="space-y-5 p-8">
+            <Badge variant="secondary" className="w-fit">
+              Welcome Back
+            </Badge>
+            <div className="space-y-3">
+              <h1 className="text-4xl font-bold tracking-[-0.03em]">Calm premium workspace</h1>
+              <p className="text-[0.9375rem] text-muted-foreground">
+                Продолжайте создавать, планировать и публиковать контент в единой AI-среде.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-              />
+            <div className="rounded-2xl border border-border bg-secondary p-4">
+              <p className="inline-flex items-center gap-2 text-[0.875rem] font-medium">
+                <ShieldCheck className="h-4 w-4 text-primary" />
+                Secure session
+              </p>
+              <p className="mt-1 text-[0.8125rem] text-muted-foreground">Ваши данные и доступ защищены на каждом шаге.</p>
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </Button>
-          </form>
-        </CardContent>
-        <CardFooter className="flex justify-center">
-          <p className="text-sm text-muted-foreground">
-            Don&apos;t have an account?{' '}
-            <a href="/register" className="text-primary hover:underline">
-              Sign up
-            </a>
-          </p>
-        </CardFooter>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Card className="w-full rounded-3xl border-border bg-card">
+          <CardHeader className="space-y-2">
+            <CardTitle className="text-center text-2xl">Вход</CardTitle>
+            <CardDescription className="text-center">Войдите в аккаунт Креатив-студии</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  disabled={loading}
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password">Пароль</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Введите пароль"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  disabled={loading}
+                  minLength={6}
+                  required
+                />
+              </div>
+
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {success ? <p className="text-sm text-green-600">Успешный вход, перенаправляем...</p> : null}
+
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Вход..." : "Войти"}
+                {!loading ? <ArrowRight className="h-4 w-4" /> : null}
+              </Button>
+            </form>
+            <p className="mt-4 text-center text-sm text-muted-foreground">
+              Нет аккаунта?{" "}
+              <Link href="/register" className="text-primary hover:underline">
+                Создать
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     </div>
-  )
+  );
 }

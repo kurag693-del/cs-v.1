@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { AlertCircle, CreditCard, PlusCircle, RefreshCw, AlertTriangle } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CreditCard, PlusCircle, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 import { checkCredits, getSubscriptionStatus, TIER_CONFIGS } from '@/lib/billing/actions'
 import { format } from 'date-fns'
@@ -92,11 +92,16 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
   const percentage = limit > 0 ? Math.min((credits / limit) * 100, 100) : 0
   const isLowCredits = credits < limit * 0.2
   const isOutOfCredits = credits === 0
-
-  const usageConfig = {
-    FREE: { color: 'bg-gray-500', bgColor: 'bg-gray-100' },
-    PRO: { color: 'bg-blue-500', bgColor: 'bg-blue-100' },
-    ENTERPRISE: { color: 'bg-purple-500', bgColor: 'bg-purple-100' },
+  const tierLabelMap: Record<typeof tier, 'Free' | 'Pro' | 'Agency'> = {
+    FREE: 'Free',
+    PRO: 'Pro',
+    ENTERPRISE: 'Agency',
+  }
+  const statusLabelMap: Record<typeof status, string> = {
+    ACTIVE: 'Active',
+    CANCELED: 'Canceled',
+    EXPIRED: 'Expired',
+    TRIALING: 'Trialing',
   }
 
   if (loading) {
@@ -114,24 +119,23 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="rounded-3xl border-border shadow-[var(--shadow-sm)]">
+      <CardHeader className="space-y-4">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="space-y-2">
+            <Badge variant="secondary" className="w-fit">
+              Billing
+            </Badge>
             <CardTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />
-              Credits
+              Subscription & Credits
             </CardTitle>
-            <CardDescription>
-              Текущий тариф:{' '}
+            <CardDescription className="flex flex-wrap items-center gap-2">
+              <span>Текущий тариф:</span>
               <Badge variant={tier === 'ENTERPRISE' ? 'default' : tier === 'PRO' ? 'secondary' : 'outline'}>
-                {tier}
+                {tierLabelMap[tier]}
               </Badge>
-              {status !== 'ACTIVE' && (
-                <Badge variant="destructive" className="ml-2">
-                  {status}
-                </Badge>
-              )}
+              <Badge variant={status === 'ACTIVE' ? 'secondary' : 'outline'}>{statusLabelMap[status]}</Badge>
             </CardDescription>
           </div>
           <Button
@@ -147,40 +151,43 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Credit Balance */}
-        <div className="text-center pb-4">
-          <div className="text-5xl font-bold mb-2" style={{ color: isOutOfCredits ? '#ef4444' : 'inherit' }}>
+      <CardContent className="space-y-5">
+        <div className="rounded-2xl border border-border bg-card p-5 text-center">
+          <div className="mb-2 text-5xl font-bold tracking-[-0.03em]" style={{ color: isOutOfCredits ? '#ef4444' : 'inherit' }}>
             {credits}
             <span className="text-2xl text-muted-foreground"> / {limit}</span>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Осталось генераций
-          </p>
+          <p className="text-sm text-muted-foreground">Осталось генераций в текущем периоде</p>
         </div>
 
-        {/* Progress Bar */}
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-border bg-secondary p-4">
+            <p className="inline-flex items-center gap-2 text-[0.875rem] font-medium">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              Account safety
+            </p>
+            <p className="mt-1 text-[0.8125rem] text-muted-foreground">Статус подписки и лимиты прозрачны в реальном времени.</p>
+          </div>
+          <div className="rounded-xl border border-border bg-secondary p-4">
+            <p className="inline-flex items-center gap-2 text-[0.875rem] font-medium">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Billing clarity
+            </p>
+            <p className="mt-1 text-[0.8125rem] text-muted-foreground">Никаких скрытых платежей и агрессивных upsell-паттернов.</p>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Использовано</span>
             <span className="font-medium">{Math.round(percentage)}%</span>
           </div>
-          <Progress
-            value={percentage}
-            className={`h-2 ${
-              isOutOfCredits
-                ? 'bg-red-500'
-                : isLowCredits
-                ? 'bg-orange-500'
-                : 'bg-primary'
-            }`}
-          />
+          <Progress value={percentage} className="h-2.5" />
         </div>
 
-        {/* Alerts */}
         {isOutOfCredits && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20">
-            <AlertCircle className="h-4 w-4 text-destructive mt-0.5" />
+          <div className="flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/10 p-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
             <div className="text-sm text-destructive">
               <p className="font-medium">Недостаточно кредитов</p>
               <p>Пополните баланс для продолжения генерации контента.</p>
@@ -189,8 +196,8 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
         )}
 
         {isLowCredits && !isOutOfCredits && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-yellow-50 border border-yellow-200">
-            <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5" />
+          <div className="flex items-start gap-2 rounded-xl border border-yellow-200 bg-yellow-50 p-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 text-yellow-600" />
             <div className="text-sm text-yellow-700">
               <p className="font-medium">Мало кредитов</p>
               <p>Осталось менее 20% от месячного лимита.</p>
@@ -199,8 +206,8 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
         )}
 
         {status === 'EXPIRED' && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-red-50 border border-red-200">
-            <AlertCircle className="h-4 w-4 text-red-600 mt-0.5" />
+          <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 text-red-600" />
             <div className="text-sm text-red-700">
               <p className="font-medium">Подписка истекла</p>
               <p>Оплатите счет для восстановления доступа.</p>
@@ -208,49 +215,33 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
           </div>
         )}
 
-        {/* Upgrade Buttons */}
         {tier !== 'ENTERPRISE' && (
           <div className="space-y-2">
-            <Button
-              className="w-full"
-              variant={tier === 'PRO' ? 'outline' : 'default'}
-              onClick={() => handlePurchase('PRO')}
-            >
+            <p className="text-[0.8125rem] uppercase tracking-[0.08em] text-muted-foreground">Upgrade options</p>
+            <Button className="w-full" variant={tier === 'PRO' ? 'outline' : 'default'} onClick={() => handlePurchase('PRO')}>
               <PlusCircle className="mr-2 h-4 w-4" />
-              PRO — ${TIER_CONFIGS.PRO.priceUSD}/месяц
+              Pro — ${TIER_CONFIGS.PRO.priceUSD}/месяц
               <span className="ml-2 text-xs opacity-70">({TIER_CONFIGS.PRO.monthlyCredits} кредитов)</span>
             </Button>
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => handlePurchase('ENTERPRISE')}
-            >
+            <Button className="w-full" variant="outline" onClick={() => handlePurchase('ENTERPRISE')}>
               <PlusCircle className="mr-2 h-4 w-4" />
-              ENTERPRISE — ${TIER_CONFIGS.ENTERPRISE.priceUSD}/месяц
+              Agency — ${TIER_CONFIGS.ENTERPRISE.priceUSD}/месяц
               <span className="ml-2 text-xs opacity-70">({TIER_CONFIGS.ENTERPRISE.monthlyCredits} кредитов)</span>
             </Button>
           </div>
         )}
 
-        {/* Transaction History Toggle */}
         <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-between"
-            onClick={() => setShowHistory(!showHistory)}
-          >
+          <Button variant="ghost" size="sm" className="w-full justify-between" onClick={() => setShowHistory(!showHistory)}>
             <span className="flex items-center gap-2">
               <CreditCard className="h-4 w-4" />
               История транзакций
             </span>
-            <span className="text-xs text-muted-foreground">
-              {showHistory ? 'Скрыть' : 'Показать'}
-            </span>
+            <span className="text-xs text-muted-foreground">{showHistory ? 'Скрыть' : 'Показать'}</span>
           </Button>
 
           {showHistory && (
-            <div className="mt-4 rounded-md border">
+            <div className="mt-4 overflow-hidden rounded-xl border border-border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -269,21 +260,14 @@ export function CreditsPanel({ userId }: CreditsPanelProps) {
                   ) : (
                     transactions.map((t) => (
                       <TableRow key={t.id}>
-                        <TableCell className="text-sm">
-                          {format(new Date(t.createdAt), 'dd.MM HH:mm')}
-                        </TableCell>
+                        <TableCell className="text-sm">{format(new Date(t.createdAt), 'dd.MM HH:mm')}</TableCell>
                         <TableCell>
-                          <span
-                            className={`font-medium ${
-                              t.type === 'credit' ? 'text-green-600' : 'text-red-600'
-                            }`}
-                          >
-                            {t.type === 'credit' ? '+' : '-'}{Math.abs(t.amount)}
+                          <span className={`font-medium ${t.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                            {t.type === 'credit' ? '+' : '-'}
+                            {Math.abs(t.amount)}
                           </span>
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                          {t.description}
-                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate text-sm text-muted-foreground">{t.description}</TableCell>
                       </TableRow>
                     ))
                   )}

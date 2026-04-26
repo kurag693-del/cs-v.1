@@ -4,20 +4,45 @@ import { prisma } from '@/lib/db'
 import { CreateBrandSchema, UpdateBrandSchema, type Result } from '@/lib/validation/brand'
 import { revalidatePath } from 'next/cache'
 
-export async function createBrand(data: FormData, userId: string): Promise<Result<any>> {
-  try {
-    const rawData = {
+type BrandInput = FormData | Record<string, unknown>
+
+function normalizeBrandInput(data: BrandInput) {
+  if (data instanceof FormData) {
+    return {
       name: data.get('name') as string,
       description: (data.get('description') as string) || undefined,
       tone: data.get('tone') as string,
       voice: (data.get('voice') as string) || undefined,
+      vocabularyRules: JSON.parse((data.get('vocabularyRules') as string) || '[]'),
       colors: JSON.parse((data.get('colors') as string) || '[]'),
       forbiddenWords: JSON.parse((data.get('forbiddenWords') as string) || '[]'),
+      structureTemplate: (data.get('structureTemplate') as string) || undefined,
       examples: (data.get('examples') as string) || undefined,
       website: (data.get('website') as string) || undefined,
       industry: (data.get('industry') as string) || undefined,
       isActive: (data.get('isActive') as string) === 'true',
     }
+  }
+
+  return {
+    name: typeof data.name === 'string' ? data.name : '',
+    description: typeof data.description === 'string' ? data.description : undefined,
+    tone: typeof data.tone === 'string' ? data.tone : '',
+    voice: typeof data.voice === 'string' ? data.voice : undefined,
+    vocabularyRules: Array.isArray(data.vocabularyRules) ? data.vocabularyRules : [],
+    colors: Array.isArray(data.colors) ? data.colors : [],
+    forbiddenWords: Array.isArray(data.forbiddenWords) ? data.forbiddenWords : [],
+    structureTemplate: typeof data.structureTemplate === 'string' ? data.structureTemplate : undefined,
+    examples: typeof data.examples === 'string' ? data.examples : undefined,
+    website: typeof data.website === 'string' ? data.website : undefined,
+    industry: typeof data.industry === 'string' ? data.industry : undefined,
+    isActive: typeof data.isActive === 'boolean' ? data.isActive : false,
+  }
+}
+
+export async function createBrand(data: BrandInput, userId: string): Promise<Result<any>> {
+  try {
+    const rawData = normalizeBrandInput(data)
 
     const validated = CreateBrandSchema.safeParse(rawData)
 
@@ -80,20 +105,9 @@ export async function getBrands(userId: string) {
   }
 }
 
-export async function updateBrand(id: string, data: FormData, userId: string): Promise<Result<any>> {
+export async function updateBrand(id: string, data: BrandInput, userId: string): Promise<Result<any>> {
   try {
-    const rawData = {
-      name: data.get('name') as string,
-      description: (data.get('description') as string) || undefined,
-      tone: data.get('tone') as string,
-      voice: (data.get('voice') as string) || undefined,
-      colors: JSON.parse((data.get('colors') as string) || '[]'),
-      forbiddenWords: JSON.parse((data.get('forbiddenWords') as string) || '[]'),
-      examples: (data.get('examples') as string) || undefined,
-      website: (data.get('website') as string) || undefined,
-      industry: (data.get('industry') as string) || undefined,
-      isActive: (data.get('isActive') as string) === 'true',
-    }
+    const rawData = normalizeBrandInput(data)
 
     const validated = UpdateBrandSchema.safeParse({ ...rawData, id })
 

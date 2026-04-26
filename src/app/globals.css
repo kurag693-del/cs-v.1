@@ -5,57 +5,225 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    color-scheme: light;
+
+    /* Calm Premium Intelligence - light theme */
+    --background: #f6f7f9;
+    --foreground: #111318;
+    --card: #ffffff;
+    --card-foreground: #111318;
+    --popover: #ffffff;
+    --popover-foreground: #111318;
+    --primary: #5b5ce6;
+    --primary-foreground: #ffffff;
+    --secondary: #eef1f5;
+    --secondary-foreground: #111318;
+    --muted: #eef1f5;
+    --muted-foreground: #6b7280;
+    --accent: #eef0ff;
+    --accent-foreground: #4f46e5;
+    --destructive: #d14343;
+    --destructive-foreground: #ffffff;
+    --border: #dbe1ea;
+    --input: #dbe1ea;
+    --ring: #5b5ce6;
+
+    /* Global surface aliases for consistent composition */
+    --surface: #ffffff;
+    --surface-secondary: #eef1f5;
+    --text-primary: #111318;
+    --text-secondary: #6b7280;
+    --accent-hover: #4f46e5;
+    --accent-soft: #eef0ff;
+
+    /* Spacious premium scale */
+    --radius: 0.9rem;
+    --radius-sm: 0.65rem;
+    --radius-md: 0.9rem;
+    --radius-lg: 1.1rem;
+    --radius-xl: 1.35rem;
+    --radius-2xl: 1.65rem;
+
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+
+    /* Soft premium shadows */
+    --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.06);
+    --shadow-sm: 0 4px 12px rgb(16 24 40 / 0.08);
+    --shadow-md: 0 12px 28px rgb(16 24 40 / 0.1);
+    --shadow-lg: 0 24px 52px rgb(16 24 40 / 0.12);
+    --shadow-focus: 0 0 0 3px rgb(91 92 230 / 0.2);
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    color-scheme: dark;
+
+    /* Calm Premium Intelligence - dark theme */
+    --background: #0f1115;
+    --foreground: #f8fafc;
+    --card: #151821;
+    --card-foreground: #f8fafc;
+    --popover: #151821;
+    --popover-foreground: #f8fafc;
+    --primary: #5b5ce6;
+    --primary-foreground: #f8fafc;
+    --secondary: #1b1f2a;
+    --secondary-foreground: #f8fafc;
+    --muted: #1b1f2a;
+    --muted-foreground: #94a3b8;
+    --accent: #1b1f2a;
+    --accent-foreground: #c7cbff;
+    --destructive: #f87171;
+    --destructive-foreground: #0f1115;
+    --border: #262b36;
+    --input: #262b36;
+    --ring: #5b5ce6;
+
+    --surface: #151821;
+    --surface-secondary: #1b1f2a;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent-hover: #4f46e5;
+    --accent-soft: #1f2340;
+
+    --shadow-xs: 0 1px 2px rgb(2 6 23 / 0.28);
+    --shadow-sm: 0 3px 10px rgb(2 6 23 / 0.34);
+    --shadow-md: 0 14px 30px rgb(2 6 23 / 0.42);
+    --shadow-lg: 0 24px 54px rgb(2 6 23 / 0.5);
+    --shadow-focus: 0 0 0 3px rgb(91 92 230 / 0.35);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes silentPulse {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
 @layer base {
   * {
-    border-color: hsl(var(--border));
+    border-color: var(--border);
+    transition-property: color, background-color, border-color, box-shadow, fill, stroke;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   }
+
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
+    background-color: var(--background);
+    background-image:
+      radial-gradient(circle at 12% -8%, rgb(91 92 230 / 0.06), transparent 38%),
+      radial-gradient(circle at 88% -12%, rgb(17 19 24 / 0.03), transparent 35%);
+    background-attachment: fixed;
+    color: var(--foreground);
+    font-family: var(--font-sans), Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 0.96875rem;
+    font-weight: 400;
+    line-height: 1.6;
+    letter-spacing: -0.011em;
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display), var(--font-sans), Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+
+  h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.28;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  p,
+  li,
+  input,
+  textarea,
+  select,
+  button {
+    font-size: 0.9375rem;
+    line-height: 1.55;
+  }
+
+  small,
+  .caption {
+    font-size: 0.8125rem;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--text-secondary);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a:visited {
+    color: inherit;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 24%, transparent);
+    color: var(--foreground);
+  }
+}
+
+@layer utilities {
+  .silent-lift {
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .silent-lift:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .focus-premium {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+  }
+
+  .motion-silent {
+    animation: silentPulse 1.8s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition-duration: 1ms !important;
   }
 }

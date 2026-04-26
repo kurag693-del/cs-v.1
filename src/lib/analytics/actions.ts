@@ -54,3 +54,29 @@ export async function getAnalyticsSummary(userId: string) {
     },
   }
 }
+
+export async function getDashboardStats(userId: string): Promise<
+  | { success: true; data: { postsCount: number; creditsUsed: number; topPlatform: string | null } }
+  | { success: false; error: { message: string } }
+> {
+  try {
+    const summary = await getAnalyticsSummary(userId)
+    if (!summary.success) {
+      return { success: false, error: { message: 'Не удалось загрузить аналитику' } }
+    }
+
+    return {
+      success: true,
+      data: {
+        postsCount: summary.data.totals.posts,
+        creditsUsed: summary.data.totals.published,
+        topPlatform: summary.data.recommendations.bestPlatform ?? null,
+      },
+    }
+  } catch (error: unknown) {
+    return {
+      success: false,
+      error: { message: error instanceof Error ? error.message : 'Не удалось загрузить аналитику' },
+    }
+  }
+}

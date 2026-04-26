@@ -1,0 +1,10 @@
+import { z } from 'zod'
+
+export const generateTextInputSchema = z.object({
+  topic: z.string().min(3, 'Тема должна содержать минимум 3 символа').max(500, 'Тема слишком длинная'),
+  platform: z.enum(['Instagram', 'Telegram', 'VK', 'TikTok']),
+  brandId: z.string().optional(),
+  maxLength: z.number().int().min(80).max(5000),
+})
+
+export type GenerateTextInput = z.infer<typeof generateTextInputSchema>

@@ -140,7 +140,7 @@ function DayColumn({ day, onDropPost }: { day: CalendarDay; onDropPost: (postId:
       <div className="text-center mb-2">
         <div className="text-lg font-semibold">{format(day.date, 'd')}</div>
         <div className="text-xs text-muted-foreground">{format(day.date, 'EEE')}</div>
-        {isToday(day.date) && <Badge className="mt-1">Today</Badge>}
+        {isToday(day.date) && <Badge className="mt-1">Сегодня</Badge>}
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <div className="flex-1 min-h-[120px] max-h-[200px] overflow-y-auto rounded-md border border-dashed p-2">
@@ -150,7 +150,7 @@ function DayColumn({ day, onDropPost }: { day: CalendarDay; onDropPost: (postId:
             ))}
             {day.posts.length === 0 && (
               <div className="text-center text-xs text-muted-foreground py-4">
-                No posts
+                Нет публикаций
               </div>
             )}
           </SortableContext>
@@ -177,8 +177,8 @@ export function PostCalendar({ posts, userId, onPostClick }: PostCalendarProps) 
     if (!selectedPost) return
     const payload =
       target === 'VK'
-        ? `VK post\n\n${selectedPost.title}\n\n${selectedPost.content}`
-        : `Telegram post\n\n${selectedPost.title}\n\n${selectedPost.content}`
+        ? `Пост для VK\n\n${selectedPost.title}\n\n${selectedPost.content}`
+        : `Пост для Telegram\n\n${selectedPost.title}\n\n${selectedPost.content}`
     await navigator.clipboard.writeText(payload)
     toast({
       title: `Скопировано для ${target}`,
@@ -354,12 +354,12 @@ export function PostCalendar({ posts, userId, onPostClick }: PostCalendarProps) 
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">Все</SelectItem>
-              <SelectItem value="TWITTER">Twitter</SelectItem>
+              <SelectItem value="TWITTER">Твиттер</SelectItem>
               <SelectItem value="LINKEDIN">LinkedIn</SelectItem>
-              <SelectItem value="FACEBOOK">Facebook</SelectItem>
+              <SelectItem value="FACEBOOK">Фейсбук</SelectItem>
               <SelectItem value="INSTAGRAM">Instagram</SelectItem>
               <SelectItem value="TIKTOK">TikTok</SelectItem>
-              <SelectItem value="YOUTUBE">YouTube</SelectItem>
+              <SelectItem value="YOUTUBE">Ютуб</SelectItem>
             </SelectContent>
           </Select>
         </div>

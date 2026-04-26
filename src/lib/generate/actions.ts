@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/db'
 import { createClient } from '@/lib/auth/supabase'
 import { revalidatePath } from 'next/cache'
@@ -19,19 +20,259 @@ const GenerateInputSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
+type GenerateTextPayload =
+  | FormData
+  | {
+      topic?: string
+      prompt?: string
+      platform?: string
+      brandId?: string
+      profileId?: string
+      maxLength?: number
+      type?: string
+      metadata?: Record<string, unknown>
+    }
+
+function normalizeGenerateInput(payload: GenerateTextPayload) {
+  if (payload instanceof FormData) {
+    const metadataRaw = payload.get('metadata')
+    return {
+      type: payload.get('type') ?? 'social_post',
+      prompt: payload.get('prompt') ?? payload.get('topic'),
+      platform: payload.get('platform'),
+      brandId: payload.get('brandId'),
+      profileId: payload.get('profileId'),
+      metadata:
+        typeof metadataRaw === 'string' && metadataRaw.length > 0
+          ? (JSON.parse(metadataRaw) as Record<string, unknown>)
+          : undefined,
+    }
+  }
+
+  const normalizedPlatform =
+    payload.platform === 'Instagram'
+      ? 'INSTAGRAM'
+      : payload.platform === 'TikTok'
+        ? 'TIKTOK'
+        : payload.platform === 'VK'
+          ? 'FACEBOOK'
+          : payload.platform === 'Telegram'
+            ? 'INSTAGRAM'
+            : payload.platform
+
+  return {
+    type: payload.type ?? 'social_post',
+    prompt: payload.prompt ?? payload.topic,
+    platform: normalizedPlatform,
+    brandId: payload.brandId,
+    profileId: payload.profileId,
+    metadata: payload.metadata,
+  }
+}
+
+function hasSupabaseConfig() {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+}
+
+const GIGACHAT_BASE_URL = process.env.GIGACHAT_BASE_URL ?? 'https://gigachat.devices.sberbank.ru'
+const GIGACHAT_AUTH_URL = process.env.GIGACHAT_AUTH_URL ?? 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
+const GIGACHAT_SCOPE = process.env.GIGACHAT_SCOPE ?? 'GIGACHAT_API_PERS'
+const GIGACHAT_MODEL = process.env.GIGACHAT_MODEL ?? 'GigaChat'
+const GIGACHAT_ALLOW_SELF_SIGNED = process.env.GIGACHAT_ALLOW_SELF_SIGNED === 'true'
+
+const GeneratedJsonSchema = z.object({
+  hook: z.string().optional().default(''),
+  body: z.string().optional().default(''),
+  hashtags: z
+    .union([z.array(z.string()), z.string()])
+    .optional()
+    .transform((value) => {
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => (item.startsWith('#') ? item : `#${item}`))
+      }
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value
+          .split(/\s+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => (item.startsWith('#') ? item : `#${item}`))
+      }
+      return []
+    }),
+  cta: z.string().optional().default(''),
+})
+
+type GigaChatTokenResponse = { access_token: string }
+type GigaChatCompletionResponse = {
+  model?: string
+  choices?: Array<{
+    message?: {
+      content?: string
+    }
+  }>
+}
+
+async function withOptionalSelfSignedTls<T>(callback: () => Promise<T>): Promise<T> {
+  if (!GIGACHAT_ALLOW_SELF_SIGNED) {
+    return callback()
+  }
+
+  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+
+  try {
+    return await callback()
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+    } else {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous
+    }
+  }
+}
+
+function extractJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  if (start < 0 || end < 0 || end <= start) return null
+  return raw.slice(start, end + 1)
+}
+
+function parseGenerationFromText(raw: string): { hook: string; body: string; hashtags: string[]; cta: string } {
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const allHashtags = Array.from(
+    new Set(
+      raw
+        .match(/#[\p{L}\p{N}_]+/gu)
+        ?.map((tag) => tag.trim())
+        .filter(Boolean) ?? []
+    )
+  )
+
+  const textWithoutHashtags = raw
+    .replace(/#[\p{L}\p{N}_]+/gu, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const hook = textWithoutHashtags[0] ?? lines[0] ?? ''
+  const ctaCandidate = textWithoutHashtags[textWithoutHashtags.length - 1] ?? ''
+  const cta =
+    ctaCandidate !== hook && /!|\?|подпиш|нажм|коммент|переход|попробуйте|узнайте/i.test(ctaCandidate)
+      ? ctaCandidate
+      : ''
+
+  const bodyLines = textWithoutHashtags.slice(1, cta ? -1 : undefined)
+  const body = bodyLines.join('\n').trim()
+
+  return {
+    hook,
+    body,
+    hashtags: allHashtags,
+    cta,
+  }
+}
+
+async function getGigaChatAccessToken(): Promise<string> {
+  const clientId = process.env.GIGACHAT_CLIENT_ID ?? process.env.CLIENT_ID
+  const clientSecret = process.env.GIGACHAT_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? process.env.Client_Secret
+  const explicitAuthKey = process.env.GIGACHAT_AUTH_KEY
+  const authKey =
+    explicitAuthKey ??
+    (clientId && clientSecret ? Buffer.from(`${clientId}:${clientSecret}`).toString('base64') : undefined)
+
+  if (!authKey) {
+    throw new Error(
+      'Не задана авторизация GigaChat. Укажите GIGACHAT_AUTH_KEY или пару GIGACHAT_CLIENT_ID + GIGACHAT_CLIENT_SECRET'
+    )
+  }
+
+  const response = await withOptionalSelfSignedTls(() =>
+    fetch(GIGACHAT_AUTH_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${authKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+        'User-Agent': 'CreativeStudio/1.0',
+        RqUID: randomUUID(),
+      },
+      body: new URLSearchParams({
+        scope: GIGACHAT_SCOPE,
+      }),
+    })
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Ошибка авторизации GigaChat: ${response.status} ${errorText}`)
+  }
+
+  const data = (await response.json()) as GigaChatTokenResponse
+  if (!data.access_token) {
+    throw new Error('GigaChat не вернул access_token')
+  }
+
+  return data.access_token
+}
+
+async function generateWithGigaChat(prompt: string, temperature: number, maxTokens: number): Promise<{ content: string; model: string }> {
+  const accessToken = await getGigaChatAccessToken()
+  const response = await withOptionalSelfSignedTls(() =>
+    fetch(`${GIGACHAT_BASE_URL}/api/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'CreativeStudio/1.0',
+      },
+      body: JSON.stringify({
+        model: GIGACHAT_MODEL,
+        stream: false,
+        temperature,
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Ошибка запроса к GigaChat: ${response.status} ${errorText}`)
+  }
+
+  const data = (await response.json()) as GigaChatCompletionResponse
+  const content = data.choices?.[0]?.message?.content
+  if (!content) {
+    throw new Error('GigaChat вернул пустой ответ')
+  }
+
+  return { content, model: data.model ?? GIGACHAT_MODEL }
+}
+
 export async function generateText(
-  formData: FormData,
+  payload: GenerateTextPayload,
   userId: string
 ): Promise<GenerationResult> {
   try {
+    const normalizedInput = normalizeGenerateInput(payload)
+
     // 1. Validate input
     const validated = GenerateInputSchema.safeParse({
-      type: formData.get('type'),
-      prompt: formData.get('prompt'),
-      platform: formData.get('platform'),
-      brandId: formData.get('brandId'),
-      profileId: formData.get('profileId'),
-      metadata: formData.get('metadata'),
+      type: normalizedInput.type,
+      prompt: normalizedInput.prompt,
+      platform: normalizedInput.platform,
+      brandId: normalizedInput.brandId,
+      profileId: normalizedInput.profileId,
+      metadata: normalizedInput.metadata,
     })
 
     if (!validated.success) {
@@ -44,24 +285,41 @@ export async function generateText(
 
     const { type, prompt, platform, brandId, profileId, metadata } = validated.data
 
-    // 2. Fetch user and profile with credits
-    const supabase = createClient()
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    // 2. Resolve user (Supabase session when configured, otherwise local Prisma mode)
+    if (hasSupabaseConfig()) {
+      const supabase = createClient()
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
 
-    if (userError || !user) {
-      return {
-        success: false,
-        error: 'Authentication required',
-        code: 'AUTH_ERROR',
+      if (userError || !user) {
+        return {
+          success: false,
+          error: 'Authentication required',
+          code: 'AUTH_ERROR',
+        }
       }
-    }
 
-    // Verify user matches session
-    if (user.id !== userId) {
-      return {
-        success: false,
-        error: 'User mismatch',
-        code: 'AUTH_ERROR',
+      if (user.id !== userId) {
+        return {
+          success: false,
+          error: 'User mismatch',
+          code: 'AUTH_ERROR',
+        }
+      }
+    } else {
+      const localUser = await prisma.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: { id: true },
+      })
+
+      if (!localUser) {
+        return {
+          success: false,
+          error: 'Пользователь не найден',
+          code: 'AUTH_ERROR',
+        }
       }
     }
 
@@ -181,21 +439,40 @@ export async function generateText(
       },
     })
 
-    // 10. Simulate LLM call (in production: call LiteLLM/OpenRouter)
-    // For now, simulate based on type
-    const generatedContent = simulateGeneration(type, enhancedPrompt, route)
+    // 10. Real LLM call via GigaChat
+    const gigaResult = await generateWithGigaChat(enhancedPrompt, route.temperature, route.maxTokens)
+    const jsonPayload = extractJsonObject(gigaResult.content)
+    let generated: z.infer<typeof GeneratedJsonSchema>
+    if (jsonPayload) {
+      const parsedGeneration = GeneratedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
+      if (parsedGeneration.success) {
+        generated = parsedGeneration.data
+      } else {
+        generated = parseGenerationFromText(gigaResult.content)
+      }
+    } else {
+      generated = parseGenerationFromText(gigaResult.content)
+    }
+    const generatedContent = `${generated.hook}\n\n${generated.body}\n\n${generated.hashtags.join(' ')}\n\n${generated.cta}`.trim()
+    const generationOutputJson = JSON.stringify({
+      hook: generated.hook,
+      body: generated.body,
+      hashtags: generated.hashtags,
+      cta: generated.cta,
+    })
 
     // 11. Update generation with result
     await prisma.generation.update({
       where: { id: generation.id },
       data: {
         status: 'COMPLETED' as const,
-        output: generatedContent,
+        output: generationOutputJson,
         tokens: estimatedTokens,
         metadata: ({
           ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
           completedAt: new Date(),
           actualCost: estimatedCost,
+          modelUsed: gigaResult.model,
         } as unknown as Prisma.InputJsonValue),
       },
     })
@@ -214,7 +491,7 @@ export async function generateText(
       data: {
         generationId: generation.id,
         content: generatedContent,
-        model: route.model,
+        model: gigaResult.model,
         tokens: {
           promptTokens: 500,
           completionTokens: 1000,
@@ -267,17 +544,3 @@ function buildPrompt(
   return `${systemContext}\nTask: ${type}\nPrompt: ${prompt}`
 }
 
-// Simulate generation (in production: call actual LLM via LiteLLM/OpenRouter)
-function simulateGeneration(type: GenerationTask, prompt: string, route: RouteDecision): string {
-  const templates: Record<GenerationTask, string> = {
-    social_post: `🚀 ${prompt.substring(0, 50)}...\n\n✨ Key points:\n• Generated by ${route.model}\n• Optimized for engagement\n• Ready to post\n\n#ContentCreation #AI`,
-    blog_outline: `# ${prompt}\n\n## Introduction\n- Hook and context\n\n## Main Points\n1. First major point\n2. Second major point\n3. Third major point\n\n## Conclusion\n- Summary and call to action\n\n*Generated by ${route.model}*`,
-    ad_copy: `🔥 ${prompt}\n\n✨ Why choose us:\n• Quality guaranteed\n• Fast delivery\n• 24/7 support\n\n👉 Click to learn more!`,
-    image_prompt: `A detailed visual representation of "${prompt}", professional quality, highly detailed, 8k resolution, photorealistic --ar 16:9`,
-    feedback_optimizer: `✅ Original: ${prompt}\n\n📝 Optimized version:\n${prompt}\n\n💡 Suggestions:\n• Break into shorter sentences\n• Add bullet points for readability\n• Include a clear call-to-action`,
-    brand_voice: `Brand Voice Profile for "${prompt}":\n\nTone: Professional yet approachable\nStyle: Clear, concise, engaging\nAudience: Tech-savvy professionals\nKey phrases: "Innovative", "Reliable", "Forward-thinking"\n\nExample posts:\n- "Excited to announce our latest feature! 🚀"
-- "Here's how we're solving [problem]"`,
-  }
-
-  return templates[type] || `Generated content for: ${prompt}`
-}

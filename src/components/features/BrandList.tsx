@@ -63,7 +63,7 @@ export function BrandList({ userId, initialBrands }: BrandListProps) {
     } else {
       toast({
         title: 'Ошибка',
-        description: result.error,
+        description: result.error ?? 'Не удалось удалить бренд',
         variant: 'destructive',
       })
     }
@@ -121,12 +121,7 @@ export function BrandList({ userId, initialBrands }: BrandListProps) {
               editingBrand
                 ? {
                     name: editingBrand.name,
-                    description: editingBrand.description ?? undefined,
                     tone: editingBrand.tone ?? '',
-                    voice: editingBrand.voice ?? undefined,
-                    colors: editingBrand.colors ?? [],
-                    industry: editingBrand.industry ?? undefined,
-                    isActive: editingBrand.isActive,
                   }
                 : undefined
             }
