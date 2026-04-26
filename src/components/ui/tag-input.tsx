@@ -30,13 +30,13 @@ export function TagInput({ tags, onChange, placeholder, className }: TagInputPro
   }
 
   return (
-    <div className={cn('flex flex-wrap gap-2 rounded-md border border-input bg-background p-2', className)}>
+    <div className={cn('flex w-full min-w-0 flex-wrap items-start gap-2 rounded-md border border-input bg-background p-2', className)}>
       {tags.map((tag) => (
         <span
           key={tag}
-          className="flex items-center gap-1 rounded-full bg-secondary px-3 py-1 text-sm"
+          className="flex max-w-full items-center gap-1 rounded-full bg-secondary px-3 py-1 text-sm"
         >
-          {tag}
+          <span className="truncate">{tag}</span>
           <button
             type="button"
             onClick={() => removeTag(tag)}
@@ -53,7 +53,7 @@ export function TagInput({ tags, onChange, placeholder, className }: TagInputPro
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className="flex-1 min-w-[120px] bg-transparent outline-none text-sm"
+        className="h-8 w-full min-w-0 flex-[1_1_10rem] appearance-none border-0 bg-transparent px-0 py-0 text-sm shadow-none outline-none ring-0 focus:outline-none focus:ring-0"
       />
     </div>
   )

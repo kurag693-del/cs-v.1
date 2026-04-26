@@ -1,32 +1,17 @@
 "use server";
 
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
 
-export interface DashboardBestPlatform {
-  platform: string;
-  count: number;
-}
+const DashboardStatsSchema = z.object({
+  postsCount: z.number().int().min(0),
+  creditsUsed: z.number().int().min(0),
+  topPlatform: z.string().nullable(),
+});
 
-export interface DashboardStats {
-  postsLast7Days: number;
-  creditsSpent: number;
-  bestPlatforms: DashboardBestPlatform[];
-}
-
-export type DashboardStatsResult =
-  | {
-      success: true;
-      data: DashboardStats;
-    }
-  | {
-      success: false;
-      error: {
-        code: string;
-        message: string;
-      };
-    };
+export type DashboardStats = z.infer<typeof DashboardStatsSchema>;
 
 export async function getDashboardStats(userId: string): Promise<DashboardStatsResult> {
   if (!userId) {
@@ -39,30 +24,39 @@ export async function getDashboardStats(userId: string): Promise<DashboardStatsR
     };
   }
 
-  const sinceDate = new Date();
-  sinceDate.setDate(sinceDate.getDate() - 7);
+  const now = new Date();
+  const last7Days = new Date(now);
+  last7Days.setDate(last7Days.getDate() - 7);
+
+  const last30Days = new Date(now);
+  last30Days.setDate(last30Days.getDate() - 30);
+
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const defaultGenerationLimit = 100;
 
   try {
-    const [postsLast7Days, generationsAggregate, groupedPlatforms] = await Promise.all([
+    const [postsCount, subscriptions, platformGroups] = await Promise.all([
       prisma.post.count({
         where: {
           userId,
           deletedAt: null,
-          createdAt: {
-            gte: sinceDate,
+          status: {
+            in: ["SCHEDULED", "DRAFT"],
+          },
+          updatedAt: {
+            gte: last7Days,
           },
         },
       }),
-      prisma.generation.aggregate({
+      prisma.subscription.findMany({
         where: {
           userId,
-          deletedAt: null,
-          createdAt: {
-            gte: sinceDate,
+          updatedAt: {
+            gte: currentMonthStart,
           },
         },
-        _sum: {
-          tokens: true,
+        select: {
+          generationLimit: true,
         },
       }),
       prisma.post.groupBy({
@@ -71,7 +65,7 @@ export async function getDashboardStats(userId: string): Promise<DashboardStatsR
           userId,
           deletedAt: null,
           createdAt: {
-            gte: sinceDate,
+            gte: last30Days,
           },
         },
         _count: {
@@ -82,20 +76,25 @@ export async function getDashboardStats(userId: string): Promise<DashboardStatsR
             platform: "desc",
           },
         },
-        take: 3,
+        take: 1,
       }),
     ]);
 
+    const creditsUsed = subscriptions.reduce((sum, item) => {
+      const spent = Math.max(0, defaultGenerationLimit - item.generationLimit);
+      return sum + spent;
+    }, 0);
+
+    const rawStats: DashboardStats = {
+      postsCount,
+      creditsUsed,
+      topPlatform: platformGroups[0]?.platform ?? null,
+    };
+    const parsedStats = DashboardStatsSchema.parse(rawStats);
+
     return {
       success: true,
-      data: {
-        postsLast7Days,
-        creditsSpent: generationsAggregate._sum.tokens ?? 0,
-        bestPlatforms: groupedPlatforms.map((item) => ({
-          platform: item.platform,
-          count: item._count._all,
-        })),
-      },
+      data: parsedStats,
     };
   } catch (error: unknown) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -117,6 +116,19 @@ export async function getDashboardStats(userId: string): Promise<DashboardStatsR
     };
   }
 }
+
+export type DashboardStatsResult =
+  | {
+      success: true;
+      data: DashboardStats;
+    }
+  | {
+      success: false;
+      error: {
+        code: string;
+        message: string;
+      };
+    };
 export async function getAnalyticsSummary(userId: string) {
   const posts = await prisma.post.findMany({
     where: {

@@ -82,7 +82,7 @@ function SidebarContent({ onNavigate, compact = false }: SidebarContentProps) {
       <div className="space-y-7 overflow-y-auto pr-1">
         <div className="px-2">
           <p className="text-[0.6875rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            AI Content Studio
+            AI-студия контента
           </p>
           <p className="mt-2 text-xl font-semibold tracking-[-0.02em]">Креатив-студия</p>
         </div>
@@ -133,8 +133,8 @@ function SidebarContent({ onNavigate, compact = false }: SidebarContentProps) {
               {profileInitials}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[0.9375rem] font-medium">Workspace</p>
-              <p className="truncate text-[0.8125rem] text-muted-foreground">Premium plan</p>
+              <p className="truncate text-[0.9375rem] font-medium">Рабочее пространство</p>
+              <p className="truncate text-[0.8125rem] text-muted-foreground">Премиум-тариф</p>
             </div>
           </div>
         </div>

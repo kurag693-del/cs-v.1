@@ -48,7 +48,7 @@ type IntegrationCard = {
   platform: string;
   accountLabel: string;
   status: IntegrationStatus;
-  health: "Healthy" | "Degraded";
+  health: "Стабильно" | "Есть проблемы";
   permissions: string;
   syncState: string;
   postingLimit: string;
@@ -60,8 +60,8 @@ const integrations: IntegrationCard[] = [
     platform: "Telegram",
     accountLabel: "@creative_studio",
     status: "connected",
-    health: "Healthy",
-    permissions: "Read/Write",
+    health: "Стабильно",
+    permissions: "Чтение/публикация",
     syncState: "Синхронизация 2 мин назад",
     postingLimit: "50 публикаций / день",
   },
@@ -70,8 +70,8 @@ const integrations: IntegrationCard[] = [
     platform: "VK",
     accountLabel: "vk.com/creativestudio",
     status: "connected",
-    health: "Healthy",
-    permissions: "Read/Write",
+    health: "Стабильно",
+    permissions: "Чтение/публикация",
     syncState: "Синхронизация 6 мин назад",
     postingLimit: "30 публикаций / день",
   },
@@ -80,18 +80,18 @@ const integrations: IntegrationCard[] = [
     platform: "LinkedIn",
     accountLabel: "Creative Studio Company Page",
     status: "attention",
-    health: "Degraded",
-    permissions: "Read only",
+    health: "Есть проблемы",
+    permissions: "Только чтение",
     syncState: "Требуется повторная авторизация",
-    postingLimit: "15 публикаций / день",
+    postingLimit: "15 публикаций в день",
   },
   {
     id: "youtube",
     platform: "YouTube",
     accountLabel: "Creative Studio Channel",
     status: "connected",
-    health: "Healthy",
-    permissions: "Upload + Publish",
+    health: "Стабильно",
+    permissions: "Загрузка и публикация",
     syncState: "Синхронизация 4 мин назад",
     postingLimit: "10 видео / день",
   },
@@ -100,10 +100,10 @@ const integrations: IntegrationCard[] = [
     platform: "Яндекс Дзен",
     accountLabel: "Креатив-студия",
     status: "attention",
-    health: "Degraded",
-    permissions: "Read/Write",
-    syncState: "Sync paused: token refresh needed",
-    postingLimit: "20 публикаций / день",
+    health: "Есть проблемы",
+    permissions: "Чтение/публикация",
+    syncState: "Синхронизация приостановлена: нужно обновить токен",
+    postingLimit: "20 публикаций в день",
   },
 ];
 
@@ -163,22 +163,24 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
         <div className="grid gap-3 md:grid-cols-3">
           <Card>
             <CardContent className="pt-6">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Connected</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Подключено</p>
               <p className="mt-2 text-2xl font-semibold tracking-[-0.02em]">{connectedCount}</p>
               <p className="text-[0.8125rem] text-muted-foreground">из {integrations.length} платформ активны</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Account Health</p>
-              <p className="mt-2 text-2xl font-semibold tracking-[-0.02em]">{attentionCount === 0 ? "Stable" : "Needs attention"}</p>
-              <p className="text-[0.8125rem] text-muted-foreground">{attentionCount} требуют reconnect</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Состояние аккаунтов</p>
+              <p className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
+                {attentionCount === 0 ? "Стабильно" : "Требует внимания"}
+              </p>
+              <p className="text-[0.8125rem] text-muted-foreground">{attentionCount} требуют повторного входа</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Publishing Access</p>
-              <p className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Ready</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Доступ к публикации</p>
+              <p className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Готово</p>
               <p className="text-[0.8125rem] text-muted-foreground">очередь публикаций доступна</p>
             </CardContent>
           </Card>
@@ -196,20 +198,20 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
                   </div>
                   <Badge variant={isConnected ? "secondary" : "outline"} className="gap-1">
                     {isConnected ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                    {isConnected ? "Connected" : "Reconnect required"}
+                    {isConnected ? "Подключено" : "Нужно переподключение"}
                   </Badge>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="rounded-xl border border-border bg-card p-3">
-                      <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Health</p>
+                      <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Состояние</p>
                       <p className="mt-1 inline-flex items-center gap-1.5 text-[0.875rem] font-medium">
                         <Signal className="h-3.5 w-3.5 text-primary" />
                         {item.health}
                       </p>
                     </div>
                     <div className="rounded-xl border border-border bg-card p-3">
-                      <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Permissions</p>
+                      <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Права</p>
                       <p className="mt-1 inline-flex items-center gap-1.5 text-[0.875rem] font-medium">
                         <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                         {item.permissions}
@@ -217,23 +219,23 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
                     </div>
                   </div>
                   <div className="rounded-xl border border-border bg-secondary p-3">
-                    <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Sync state</p>
+                    <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Статус синхронизации</p>
                     <p className="mt-1 text-[0.875rem]">{item.syncState}</p>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[0.8125rem] text-muted-foreground">Posting limits: {item.postingLimit}</p>
+                    <p className="text-[0.8125rem] text-muted-foreground">Лимит публикаций: {item.postingLimit}</p>
                     <Button
                       size="sm"
                       variant={isConnected ? "outline" : "default"}
                       onClick={() =>
                         toast({
-                          title: isConnected ? "Проверка соединения" : "Reconnect запущен",
+                          title: isConnected ? "Проверка соединения" : "Переподключение запущено",
                           description: `${item.platform}: ${isConnected ? "соединение стабильно" : "обновите OAuth-токен"}`,
                         })
                       }
                     >
                       {isConnected ? <Link2 className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
-                      {isConnected ? "Проверить" : "Reconnect"}
+                      {isConnected ? "Проверить" : "Переподключить"}
                     </Button>
                   </div>
                 </CardContent>
@@ -246,7 +248,7 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-[1.125rem] font-semibold tracking-[-0.02em]">Brand Workspace</p>
+            <p className="text-[1.125rem] font-semibold tracking-[-0.02em]">Рабочее пространство брендов</p>
             <p className="text-sm text-muted-foreground">Всего брендов: {brands.length}</p>
           </div>
 
@@ -254,7 +256,7 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
           <DialogTrigger asChild>
             <Button onClick={openCreate}>Создать бренд</Button>
           </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogContent className="max-h-[90vh] overflow-y-auto p-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:max-w-2xl sm:p-7">
             <DialogHeader>
               <DialogTitle>{editingBrand ? "Редактирование бренда" : "Новый бренд"}</DialogTitle>
               <DialogDescription>
@@ -274,6 +276,7 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
                   : undefined
               }
               onSuccess={handleFormSuccess}
+              inDialog
             />
           </DialogContent>
         </Dialog>

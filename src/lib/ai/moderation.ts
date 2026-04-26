@@ -68,6 +68,15 @@ function fallbackRejected(reason: string): ModerationResult {
   };
 }
 
+function fallbackApproved(reason: string): ModerationResult {
+  return {
+    isApproved: true,
+    flags: [],
+    suggestion: "Автоматическая модерация пропущена. При необходимости проверьте текст вручную.",
+    reason,
+  };
+}
+
 async function runGeminiModeration(
   modelName: string,
   promptInput: string,
@@ -153,8 +162,18 @@ async function moderateContent(
     };
   } catch (error: unknown) {
     console.error("moderateContent error:", error);
+    const message = error instanceof Error ? error.message : "Неизвестная ошибка модерации";
+
+    // Для локальной разработки не блокируем генерацию, если ключ модерации не настроен.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      message.includes("GOOGLE_API_KEY (или GEMINI_API_KEY) не задан")
+    ) {
+      return fallbackApproved("Moderation skipped: GOOGLE_API_KEY/GEMINI_API_KEY не задан");
+    }
+
     return fallbackRejected(
-      error instanceof Error ? error.message : "Неизвестная ошибка модерации"
+      message
     );
   }
 }

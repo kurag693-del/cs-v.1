@@ -29,6 +29,7 @@ type BrandFormProps = {
   brandId?: string;
   initialData?: Partial<CreateBrandInput>;
   onSuccess?: () => void;
+  inDialog?: boolean;
 };
 
 const defaultValues: CreateBrandInput = {
@@ -46,6 +47,7 @@ export function BrandForm({
   brandId,
   initialData,
   onSuccess,
+  inDialog = false,
 }: BrandFormProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -103,28 +105,22 @@ export function BrandForm({
 
   const isSubmitting = form.formState.isSubmitting;
 
-  return (
-    <Card className="mx-auto w-full max-w-3xl">
-      <CardHeader>
-        <CardTitle>{mode === "edit" ? "Редактирование бренда" : "Создание бренда"}</CardTitle>
-        <CardDescription>
-          {mode === "edit"
-            ? "Обновите параметры бренда"
-            : "Заполните параметры бренда для генерации контента"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Form {...form}>
-          <form className="grid grid-cols-1 gap-6 md:grid-cols-2" onSubmit={form.handleSubmit(onSubmit)}>
+  const formContent = (
+    <Form {...form}>
+      <form
+        className={inDialog ? "grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2" : "grid min-w-0 grid-cols-1 gap-6 md:grid-cols-2"}
+        onSubmit={form.handleSubmit(onSubmit)}
+      >
             <FormField
               control={form.control}
               name="name"
               render={({ field }) => (
-                <FormItem className="md:col-span-2">
+                <FormItem className="min-w-0 md:col-span-2">
                   <FormLabel>Название</FormLabel>
                   <FormControl>
                     <Input placeholder="Например, Creative Studio" {...field} disabled={isSubmitting} />
                   </FormControl>
+                  <FormDescription>Короткое имя бренда, которое будет видно в генераторе и календаре.</FormDescription>
                   <FormMessage>{form.formState.errors.name?.message}</FormMessage>
                 </FormItem>
               )}
@@ -134,16 +130,19 @@ export function BrandForm({
               control={form.control}
               name="tone"
               render={({ field }) => (
-                <FormItem className="md:col-span-2">
+                <FormItem className="min-w-0 md:col-span-2">
                   <FormLabel>Тон</FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder="Опишите стиль и тон коммуникации"
-                      className="min-h-24"
+                      className="min-h-24 w-full max-w-full resize-none overflow-hidden"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
+                  <FormDescription>
+                    Укажите, как бренд должен звучать: например, "экспертно, дружелюбно, без канцелярита".
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.tone?.message}</FormMessage>
                 </FormItem>
               )}
@@ -153,16 +152,17 @@ export function BrandForm({
               control={form.control}
               name="vocabularyRules"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Vocabulary Rules</FormLabel>
+                <FormItem className="min-w-0">
+                  <FormLabel>Предпочтительные слова</FormLabel>
                   <FormControl>
                     <TagInput
                       tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Добавьте правило и нажмите Enter"
+                      placeholder="Например: прозрачность, забота, результат"
+                      className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>Слова и фразы, которые бренд предпочитает использовать</FormDescription>
+                  <FormDescription>Добавляйте слова и фразы по одному, подтверждая Enter.</FormDescription>
                   <FormMessage>{form.formState.errors.vocabularyRules?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
@@ -172,16 +172,17 @@ export function BrandForm({
               control={form.control}
               name="forbiddenWords"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Forbidden Words</FormLabel>
+                <FormItem className="min-w-0">
+                  <FormLabel>Запрещенные слова</FormLabel>
                   <FormControl>
                     <TagInput
                       tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Добавьте слово и нажмите Enter"
+                      placeholder="Например: дешево, гарантировано, срочно"
+                      className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>Слова, которые нельзя использовать в контенте</FormDescription>
+                  <FormDescription>Эти слова модель будет избегать в текстах.</FormDescription>
                   <FormMessage>{form.formState.errors.forbiddenWords?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
@@ -191,16 +192,17 @@ export function BrandForm({
               control={form.control}
               name="structureTemplate"
               render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Structure Template</FormLabel>
+                <FormItem className="min-w-0 md:col-span-2">
+                  <FormLabel>Шаблон структуры</FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder="Например: Hook -> Value -> CTA"
-                      className="min-h-24"
+                      className="min-h-24 w-full max-w-full resize-none overflow-hidden"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
+                  <FormDescription>Задайте порядок блоков в тексте: вступление, польза, призыв к действию.</FormDescription>
                   <FormMessage>{form.formState.errors.structureTemplate?.message}</FormMessage>
                 </FormItem>
               )}
@@ -210,17 +212,19 @@ export function BrandForm({
               control={form.control}
               name="examples"
               render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Examples (JSON)</FormLabel>
+                <FormItem className="min-w-0 md:col-span-2">
+                  <FormLabel>Примеры (JSON)</FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder='["Пример поста 1", "Пример поста 2"]'
-                      className="min-h-32 font-mono text-sm"
+                      className="min-h-32 w-full max-w-full resize-none overflow-hidden font-mono text-sm"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
-                  <FormDescription>Можно хранить JSON-строку с примерами текстов</FormDescription>
+                  <FormDescription>
+                    Необязательно. Добавьте 1-3 примера удачных текстов в формате JSON-массива.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.examples?.message}</FormMessage>
                 </FormItem>
               )}
@@ -235,9 +239,25 @@ export function BrandForm({
             <Button type="submit" className="md:col-span-2 w-full" disabled={isSubmitting}>
               {isSubmitting ? "Сохранение..." : mode === "edit" ? "Сохранить изменения" : "Создать бренд"}
             </Button>
-          </form>
-        </Form>
-      </CardContent>
+      </form>
+    </Form>
+  );
+
+  if (inDialog) {
+    return <div className="w-full min-w-0">{formContent}</div>;
+  }
+
+  return (
+    <Card className="mx-auto w-full max-w-3xl">
+      <CardHeader>
+        <CardTitle>{mode === "edit" ? "Редактирование бренда" : "Создание бренда"}</CardTitle>
+        <CardDescription>
+          {mode === "edit"
+            ? "Обновите параметры бренда"
+            : "Заполните параметры бренда для генерации контента"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>{formContent}</CardContent>
     </Card>
   );
 }
