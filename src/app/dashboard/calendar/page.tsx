@@ -7,28 +7,25 @@ import { PostCalendar } from '@/components/features/PostCalendar'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
-import { addDays, startOfWeek } from 'date-fns'
-import { getCalendarPosts, getDrafts } from '@/lib/posts/actions'
+import { getCalendarPosts } from '@/lib/posts/actions'
 import { CreatePostForm } from '@/components/features/CreatePostForm'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CalendarClock, CalendarDays, CalendarRange, CircleDot, Clock3, GripVertical, ListFilter, Rocket, Send } from 'lucide-react'
+import { CalendarRange, Clock3, GripVertical, ListFilter, Rocket, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-type ViewMode = 'week' | 'month' | 'list'
+type ViewMode = 'week' | 'list'
 
 const viewModes: Array<{ id: ViewMode; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: 'week', label: 'Week', icon: CalendarRange },
-  { id: 'month', label: 'Month', icon: CalendarDays },
-  { id: 'list', label: 'List', icon: ListFilter },
+  { id: 'week', label: 'Неделя', icon: CalendarRange },
+  { id: 'list', label: 'Список', icon: ListFilter },
 ]
 
 export default function CalendarPage() {
-  const { user, session, loading } = useSession()
+  const { user, loading } = useSession()
   const router = useRouter()
   const { toast } = useToast()
   const [posts, setPosts] = useState<any[]>([])
-  const [drafts, setDrafts] = useState<any[]>([])
   const [loadingData, setLoadingData] = useState(true)
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false)
   const [publishJobsProcessed, setPublishJobsProcessed] = useState<number | null>(null)
@@ -48,13 +45,7 @@ export default function CalendarPage() {
 
   const fetchPosts = async () => {
     try {
-      const startDate = startOfWeek(new Date(), { weekStartsOn: 1 })
-      const endDate = addDays(startDate, 6)
-      
-      const [calendarResult, draftsResult] = await Promise.all([
-        getCalendarPosts(user?.id || '', startDate, endDate),
-        getDrafts(user?.id || ''),
-      ])
+      const calendarResult = await getCalendarPosts(user?.id || '')
 
       if (calendarResult.success) {
         setPosts(calendarResult.data || [])
@@ -66,9 +57,6 @@ export default function CalendarPage() {
         })
       }
 
-      if (draftsResult.success) {
-        setDrafts(draftsResult.data || [])
-      }
     } catch (err) {
       console.error('Failed to fetch posts:', err)
     } finally {
@@ -172,15 +160,15 @@ export default function CalendarPage() {
 
           <div className="grid grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
             <div className="rounded-xl border border-border bg-background px-3 py-2">
-              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Scheduled</p>
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Запланировано</p>
               <p className="mt-1 text-[1.125rem] font-semibold">{scheduledCount}</p>
             </div>
             <div className="rounded-xl border border-border bg-background px-3 py-2">
-              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Queue</p>
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">В очереди</p>
               <p className="mt-1 text-[1.125rem] font-semibold">{queuedCount}</p>
             </div>
             <div className="rounded-xl border border-border bg-background px-3 py-2">
-              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Published</p>
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Опубликовано</p>
               <p className="mt-1 text-[1.125rem] font-semibold">{publishedCount}</p>
             </div>
           </div>
@@ -211,7 +199,7 @@ export default function CalendarPage() {
           <CardHeader className="pb-3">
             <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
               <CalendarRange className="h-4 w-4 text-primary" />
-              Week View
+              Вид по неделе
             </CardTitle>
             <CardDescription>Планируйте неделю с drag-and-drop feel и чистой видимостью расписания.</CardDescription>
           </CardHeader>
@@ -219,36 +207,11 @@ export default function CalendarPage() {
             <PostCalendar
               posts={posts}
               userId={user.id}
+              onPostScheduled={fetchPosts}
               onPostClick={(post) => {
                 console.log('Post clicked:', post)
               }}
             />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {viewMode === 'month' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
-              <CalendarDays className="h-4 w-4 text-primary" />
-              Month View
-            </CardTitle>
-            <CardDescription>Обзор публикационной нагрузки и ключевых дней на месяц.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} className="rounded-2xl border border-border bg-card p-4">
-                  <p className="text-[0.8125rem] text-muted-foreground">Week {index + 1}</p>
-                  <p className="mt-1 text-[1.125rem] font-semibold">{Math.max(1, scheduledCount - index)}</p>
-                  <p className="text-[0.8125rem] text-muted-foreground">scheduled posts</p>
-                </div>
-              ))}
-            </div>
-            <p className="mt-4 text-[0.875rem] text-muted-foreground">
-              Месячный режим фокусируется на стратегическом ритме. Переносы и детализация доступны в Week View.
-            </p>
           </CardContent>
         </Card>
       ) : null}
@@ -258,7 +221,7 @@ export default function CalendarPage() {
           <CardHeader>
             <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
               <ListFilter className="h-4 w-4 text-primary" />
-              List View
+              Вид списком
             </CardTitle>
             <CardDescription>Очередь контента с платформой, статусом публикации и авто-публикацией.</CardDescription>
           </CardHeader>
@@ -284,7 +247,7 @@ export default function CalendarPage() {
                     </Badge>
                     <span className="inline-flex items-center gap-1 rounded-lg bg-secondary px-2 py-1 text-[0.75rem] text-muted-foreground">
                       <Clock3 className="h-3 w-3" />
-                      {post.autoPublish ? 'Auto-publish ON' : 'Manual publish'}
+                      {post.autoPublish ? 'Автопубликация включена' : 'Ручная публикация'}
                     </span>
                   </div>
                 </div>
@@ -293,69 +256,6 @@ export default function CalendarPage() {
           </CardContent>
         </Card>
       ) : null}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
-              <CalendarClock className="h-4 w-4 text-primary" />
-              Content Queue
-            </CardTitle>
-            <CardDescription>Черновики и контент в очереди на публикацию.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {drafts.length === 0 ? (
-              <p className="text-[0.9375rem] text-muted-foreground">Черновиков пока нет.</p>
-            ) : (
-              <div className="space-y-3">
-                {drafts.slice(0, 8).map((draft) => (
-                  <div key={draft.id} className="rounded-xl border border-border bg-card p-3.5">
-                    <p className="text-[0.9375rem] font-medium">{draft.title ?? 'Без заголовка'}</p>
-                    <p className="mt-1 line-clamp-2 text-[0.875rem] text-muted-foreground">{draft.content}</p>
-                    <p className="mt-2 text-[0.75rem] text-muted-foreground">
-                      Платформа: {draft.platform}
-                      {draft.brand?.name ? ` | Бренд: ${draft.brand.name}` : ''}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
-              <CircleDot className="h-4 w-4 text-primary" />
-              Publishing State
-            </CardTitle>
-            <CardDescription>Спокойные индикаторы статуса и быстрый контроль состояния.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
-                <span className="text-[0.875rem]">Черновик</span>
-                <Badge className={statusClassMap.DRAFT}>DRAFT</Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
-                <span className="text-[0.875rem]">Запланирован</span>
-                <Badge className={statusClassMap.SCHEDULED}>SCHEDULED</Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
-                <span className="text-[0.875rem]">Опубликован</span>
-                <Badge className={statusClassMap.PUBLISHED}>PUBLISHED</Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
-                <span className="text-[0.875rem]">Ошибка</span>
-                <Badge className={statusClassMap.FAILED}>FAILED</Badge>
-              </div>
-            </div>
-            <p className="text-[0.8125rem] text-muted-foreground">
-              Подсказка: для точного перепланирования используйте Week View — он лучше всего передает drag-and-drop workflow.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   )
 }

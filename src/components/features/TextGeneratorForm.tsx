@@ -24,6 +24,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -52,6 +53,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [generationId, setGenerationId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
   const [copied, setCopied] = useState(false);
   const [lastRequest, setLastRequest] = useState<GenerateRequestPayload | null>(null);
 
@@ -93,6 +95,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
 
       setResult(response.data.content);
       setGenerationId(response.data.generationId);
+      setDraftTitle((current) => current || payload.topic.slice(0, 120));
       toast({
         title: "Черновик готов",
         description: `Модель: ${response.data.model}`,
@@ -154,10 +157,19 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     }
 
     const currentPlatform = form.getValues("platform");
+    const normalizedTitle = draftTitle.trim();
+    if (!normalizedTitle) {
+      toast({
+        title: "Ошибка",
+        description: "Укажите название поста перед сохранением",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       setIsSavingDraft(true);
-      const saved = await saveGenerationAsDraft(generationId, userId, currentPlatform);
+      const saved = await saveGenerationAsDraft(generationId, userId, currentPlatform, normalizedTitle);
 
       if (!saved.success) {
         toast({
@@ -349,6 +361,16 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 <CardTitle className="text-base">Успешно сгенерировано</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Название поста</p>
+                  <Input
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    placeholder="Введите название поста для календаря"
+                    maxLength={120}
+                    disabled={isSavingDraft}
+                  />
+                </div>
                 <p className="whitespace-pre-wrap text-sm">{result}</p>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={handleCopy}>

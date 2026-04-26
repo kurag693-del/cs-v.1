@@ -10,6 +10,13 @@ const SaveGenerationAsDraftSchema = z.object({
   generationId: z.string().min(1, 'generationId обязателен'),
   userId: z.string().min(1, 'userId обязателен'),
   platform: z.string().min(1, 'platform обязателен'),
+  title: z.string().trim().min(1, 'Название поста обязательно').max(120, 'Название слишком длинное').optional(),
+})
+
+const SchedulePostSchema = z.object({
+  postId: z.string().min(1, 'Некорректный идентификатор поста'),
+  scheduledAt: z.string().datetime({ offset: true, message: 'Некорректная дата планирования' }),
+  userId: z.string().min(1, 'Пользователь не определен'),
 })
 
 const GenerationOutputSchema = z.object({
@@ -313,13 +320,15 @@ export async function getDrafts(userId: string) {
 export async function saveAsDraft(
   generationId: string,
   userId: string,
-  platform: string
+  platform: string,
+  title?: string
 ): Promise<SaveAsDraftResult> {
   try {
     const parsed = SaveGenerationAsDraftSchema.safeParse({
       generationId,
       userId,
       platform,
+      title,
     })
 
     if (!parsed.success) {
@@ -377,6 +386,7 @@ export async function saveAsDraft(
     const safeOutput = parsedOutput.data
     const contentText =
       `${safeOutput.hook}\n\n${safeOutput.body}\n\n${safeOutput.hashtags.join(' ')}\n\n${safeOutput.cta}`.trim()
+    const resolvedTitle = parsed.data.title ?? (safeOutput.hook.slice(0, 120) || 'Без заголовка')
 
     const post = await prisma.post.create({
       data: {
@@ -390,6 +400,7 @@ export async function saveAsDraft(
         scheduledAt: null,
         metadata: {
           source: 'generation',
+          title: resolvedTitle,
           hashtags: safeOutput.hashtags,
         } as Prisma.InputJsonValue,
       },
@@ -423,7 +434,63 @@ export async function saveAsDraft(
 export async function saveGenerationAsDraft(
   generationId: string,
   userId: string,
-  platform: string
+  platform: string,
+  title?: string
 ): Promise<SaveAsDraftResult> {
-  return saveAsDraft(generationId, userId, platform)
+  return saveAsDraft(generationId, userId, platform, title)
+}
+
+export async function schedulePost(
+  postId: string,
+  scheduledAt: string,
+  userId: string
+): Promise<{ success: true } | { success: false; error: string }> {
+  try {
+    const parsed = SchedulePostSchema.safeParse({ postId, scheduledAt, userId })
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? 'Некорректные входные параметры',
+      }
+    }
+
+    const post = await prisma.post.findFirst({
+      where: {
+        id: parsed.data.postId,
+        userId: parsed.data.userId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    })
+
+    if (!post) {
+      return { success: false, error: 'Пост не найден или недоступен' }
+    }
+
+    if (post.status === 'PUBLISHED') {
+      return { success: false, error: 'Опубликованный пост нельзя перепланировать' }
+    }
+
+    await prisma.post.update({
+      where: { id: post.id },
+      data: {
+        scheduledAt: new Date(parsed.data.scheduledAt),
+        status: 'SCHEDULED',
+        updatedAt: new Date(),
+      },
+    })
+
+    revalidatePath('/dashboard/calendar')
+
+    return { success: true }
+  } catch (error: unknown) {
+    console.error('schedulePost error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Ошибка при планировании поста',
+    }
+  }
 }
