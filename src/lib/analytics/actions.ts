@@ -1,6 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/db'
+import { Platform } from '@prisma/client'
 
 export async function getAnalyticsSummary(userId: string) {
   const posts = await prisma.post.findMany({
@@ -77,6 +78,135 @@ export async function getDashboardStats(userId: string): Promise<
     return {
       success: false,
       error: { message: error instanceof Error ? error.message : 'Не удалось загрузить аналитику' },
+    }
+  }
+}
+
+type DashboardData = {
+  stats: {
+    totalGenerations: number
+    creditsLeft: number
+    postsScheduled: number
+  }
+  upcomingPosts: Array<{
+    id: string
+    platform: string
+    content: string
+    scheduledAt: Date | null
+    status: string
+  }>
+  recentActivity: Array<{
+    id: string
+    type: string
+    status: string
+    createdAt: Date
+    model: string
+  }>
+  connectedAccounts: Array<{
+    platform: Platform
+    isConnected: boolean
+    note?: string
+  }>
+}
+
+export async function getDashboardData(userId: string): Promise<
+  | { success: true; data: DashboardData }
+  | { success: false; error: { message: string } }
+> {
+  if (!userId) {
+    return {
+      success: false,
+      error: { message: 'User is required' },
+    }
+  }
+
+  try {
+    const [
+      totalGenerations,
+      postsScheduled,
+      upcomingPosts,
+      recentActivity,
+      subscription,
+      completedGenerations,
+      credentials,
+    ] = await prisma.$transaction([
+      prisma.generation.count({
+        where: { userId, deletedAt: null },
+      }),
+      prisma.post.count({
+        where: { userId, status: 'SCHEDULED', deletedAt: null },
+      }),
+      prisma.post.findMany({
+        where: { userId, status: 'SCHEDULED', deletedAt: null },
+        orderBy: { scheduledAt: 'asc' },
+        take: 3,
+        select: {
+          id: true,
+          platform: true,
+          content: true,
+          scheduledAt: true,
+          status: true,
+        },
+      }),
+      prisma.generation.findMany({
+        where: { userId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          model: true,
+        },
+      }),
+      prisma.subscription.findUnique({
+        where: { userId },
+        select: {
+          generationLimit: true,
+        },
+      }),
+      prisma.generation.count({
+        where: { userId, status: 'COMPLETED', deletedAt: null },
+      }),
+      prisma.platformCredential.findMany({
+        where: { userId, deletedAt: null, isActive: true },
+        select: {
+          platform: true,
+        },
+      }),
+    ])
+
+    const generationLimit = subscription?.generationLimit ?? 100
+    const creditsLeft = Math.max(generationLimit - completedGenerations, 0)
+    const connectedPlatformSet = new Set(credentials.map((credential) => credential.platform))
+    const allPlatforms: Platform[] = ['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']
+
+    const connectedAccounts = allPlatforms.map((platform) => ({
+      platform,
+      isConnected: connectedPlatformSet.has(platform),
+      note: connectedPlatformSet.has(platform) ? undefined : 'TODO: API интеграция',
+    }))
+
+    return {
+      success: true,
+      data: {
+        stats: {
+          totalGenerations,
+          creditsLeft,
+          postsScheduled,
+        },
+        upcomingPosts,
+        recentActivity,
+        connectedAccounts,
+      },
+    }
+  } catch (error: unknown) {
+    return {
+      success: false,
+      error: {
+        message: error instanceof Error ? error.message : 'Не удалось загрузить данные дашборда',
+      },
     }
   }
 }

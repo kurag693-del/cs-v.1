@@ -1,145 +1,223 @@
-import { Suspense } from "react";
-import { cookies } from "next/headers";
-import Link from "next/link";
-import { AlertCircle, CalendarDays, Sparkles, Wand2 } from "lucide-react";
+"use client";
 
-import { getDashboardStats } from "@/lib/analytics/actions";
-import { prisma } from "@/lib/db/prisma";
+import Link from "next/link";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { AlertCircle, CalendarDays, Loader2, Sparkles, Wand2 } from "lucide-react";
+
+import { generateText } from "@/lib/generate/actions";
+import { getDashboardData } from "@/lib/analytics/actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/use-toast";
 
-async function getUserIdFromAuthCookie(): Promise<string | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("sb-access-token")?.value;
-  if (!token) return null;
+type DashboardData = {
+  stats: {
+    totalGenerations: number;
+    creditsLeft: number;
+    postsScheduled: number;
+  };
+  upcomingPosts: Array<{
+    id: string;
+    platform: string;
+    content: string;
+    scheduledAt: Date | null;
+    status: string;
+  }>;
+  recentActivity: Array<{
+    id: string;
+    type: string;
+    status: string;
+    createdAt: Date;
+    model: string;
+  }>;
+  connectedAccounts: Array<{
+    platform: string;
+    isConnected: boolean;
+    note?: string;
+  }>;
+};
 
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
+function parseUserIdFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
 
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { sub?: string };
+    const rawCookie = document.cookie
+      .split("; ")
+      .find((item) => item.startsWith("sb-access-token="))
+      ?.split("=")[1];
+
+    if (!rawCookie) return null;
+
+    const token = decodeURIComponent(rawCookie);
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+
+    const payloadString = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadString) as { sub?: string };
     return payload.sub ?? null;
   } catch {
     return null;
   }
 }
 
-function StatsSkeleton() {
+function DashboardSkeleton() {
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-8 w-16" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-4 w-full" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-8 w-16" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-4 w-full" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-8 w-16" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-4 w-full" />
-        </CardContent>
-      </Card>
+    <section className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Card key={index}>
+            <CardHeader>
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-8 w-16" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-4 w-full" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Card key={index}>
+            <CardHeader>
+              <Skeleton className="h-5 w-40" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+              <Skeleton className="h-4 w-3/5" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EmptyState({ description }: { description: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/40 p-4">
+      <p className="text-sm text-muted-foreground">{description}</p>
+      <Button asChild size="sm" className="mt-3">
+        <Link href="/dashboard/generate">Создать первый пост</Link>
+      </Button>
     </div>
   );
 }
 
-async function DashboardStatsSection({ userId }: { userId: string }) {
-  const statsResult = await getDashboardStats(userId);
+function formatDate(value: Date | null): string {
+  if (!value) return "Дата не указана";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
 
-  if (!statsResult.success) {
+export default function DashboardPage() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [topic, setTopic] = useState("");
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isGenerating, startGenerating] = useTransition();
+  const userId = useMemo(() => parseUserIdFromCookie(), []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadDashboardData = async () => {
+      if (!userId) {
+        if (!isActive) return;
+        setLoadError("Сессия не найдена. Войдите заново, чтобы увидеть дашборд.");
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      const result = await getDashboardData(userId);
+
+      if (!isActive) return;
+
+      if (!result.success) {
+        setLoadError(result.error.message);
+        setDashboardData(null);
+      } else {
+        setDashboardData(result.data);
+        setLoadError(null);
+      }
+
+      setIsLoading(false);
+    };
+
+    void loadDashboardData();
+
+    return () => {
+      isActive = false;
+    };
+  }, [userId]);
+
+  const handleQuickGeneration = () => {
+    if (!userId) {
+      toast({
+        title: "Сессия не найдена",
+        description: "Перезайдите в аккаунт и повторите попытку.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const trimmedTopic = topic.trim();
+    if (!trimmedTopic) {
+      toast({
+        title: "Введите тему",
+        description: "Укажите тему поста перед генерацией.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    startGenerating(async () => {
+      const result = await generateText(
+        {
+          type: "social_post",
+          topic: trimmedTopic,
+          platform: "Instagram",
+        },
+        userId
+      );
+
+      if (!result.success || !result.data) {
+        toast({
+          title: "Ошибка генерации",
+          description: result.error ?? "Не удалось создать черновик",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Черновик создан",
+        description: "Переходим к редактированию генерации.",
+      });
+      router.push(`/dashboard/generate/${result.data.generationId}`);
+      router.refresh();
+    });
+  };
+
+  if (loadError) {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Ошибка загрузки аналитики</AlertTitle>
-        <AlertDescription>{statsResult.error.message}</AlertDescription>
-      </Alert>
-    );
-  }
-
-  const { postsCount, creditsUsed, topPlatform } = statsResult.data;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardDescription>Черновики и отложенные посты за 7 дней</CardDescription>
-            <CardTitle className="text-3xl">{postsCount}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {postsCount === 0
-                ? "Пока нет активных постов. Создайте первый черновик в генераторе."
-                : "Контент-план активен, не забудьте проверить календарь."}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardDescription>Списано кредитов в текущем месяце</CardDescription>
-            <CardTitle className="text-3xl">{creditsUsed}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {creditsUsed === 0
-                ? "Кредиты еще не расходовались. Попробуйте сгенерировать первый текст."
-                : "Следите за лимитом генераций, чтобы не остановить публикации."}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardDescription>Топ-платформа за 30 дней</CardDescription>
-            <CardTitle className="text-3xl">{topPlatform ?? "—"}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {topPlatform
-                ? "Эта платформа сейчас дает наибольшую плотность контента."
-                : "Нет данных по платформам. Опубликуйте несколько постов для аналитики."}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-export default async function DashboardPage() {
-  const userId = await getUserIdFromAuthCookie();
-  const user = userId
-    ? await prisma.user.findFirst({
-        where: { id: userId, deletedAt: null },
-        select: { id: true, email: true },
-      })
-    : null;
-
-  if (!user) {
-    return (
-      <Alert>
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Сессия не найдена</AlertTitle>
-        <AlertDescription>Войдите заново, чтобы увидеть дашборд.</AlertDescription>
+        <AlertTitle>Ошибка загрузки дашборда</AlertTitle>
+        <AlertDescription>{loadError}</AlertDescription>
       </Alert>
     );
   }
@@ -181,19 +259,112 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Профиль сессии</CardTitle>
-            <CardDescription>Текущий аккаунт для аналитики и генерации.</CardDescription>
+            <CardTitle>Быстрая генерация</CardTitle>
+            <CardDescription>Создайте черновик прямо с дашборда.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">Email</p>
-            <p className="mt-1 text-base font-medium">{user.email}</p>
+          <CardContent className="space-y-3">
+            <Input
+              value={topic}
+              onChange={(event) => setTopic(event.target.value)}
+              placeholder="Тема поста"
+              disabled={isGenerating}
+              maxLength={250}
+            />
+            <Button onClick={handleQuickGeneration} className="w-full" disabled={isGenerating}>
+              {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isGenerating ? "Генерируем..." : "Генерировать"}
+            </Button>
           </CardContent>
         </Card>
       </section>
 
-      <Suspense fallback={<StatsSkeleton />}>
-        <DashboardStatsSection userId={user.id} />
-      </Suspense>
+      {isLoading ? (
+        <DashboardSkeleton />
+      ) : dashboardData ? (
+        <section className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardDescription>Всего генераций</CardDescription>
+                <CardTitle className="text-3xl">{dashboardData.stats.totalGenerations}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>Осталось кредитов</CardDescription>
+                <CardTitle className="text-3xl">{dashboardData.stats.creditsLeft}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>Отложенных постов</CardDescription>
+                <CardTitle className="text-3xl">{dashboardData.stats.postsScheduled}</CardTitle>
+              </CardHeader>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>Upcoming Posts</CardTitle>
+                <CardDescription>Ближайшие 3 поста в статусе SCHEDULED.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {dashboardData.upcomingPosts.length === 0 ? (
+                  <EmptyState description="Пока нет запланированных постов." />
+                ) : (
+                  dashboardData.upcomingPosts.map((post) => (
+                    <div key={post.id} className="rounded-md border p-3">
+                      <p className="text-sm font-medium">{post.platform}</p>
+                      <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{post.content}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{formatDate(post.scheduledAt)}</p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Activity</CardTitle>
+                <CardDescription>Последние генерации контента.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {dashboardData.recentActivity.length === 0 ? (
+                  <EmptyState description="История генераций пока пуста." />
+                ) : (
+                  dashboardData.recentActivity.map((activity) => (
+                    <div key={activity.id} className="rounded-md border p-3">
+                      <p className="text-sm font-medium">{activity.type}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {activity.status} · {activity.model}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{formatDate(activity.createdAt)}</p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Connected Accounts</CardTitle>
+                <CardDescription>Статус подключений платформ публикации.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {dashboardData.connectedAccounts.map((account) => (
+                  <div key={account.platform} className="flex items-center justify-between rounded-md border p-2">
+                    <span className="text-sm">{account.platform}</span>
+                    <Badge variant={account.isConnected ? "default" : "secondary"}>
+                      {account.isConnected ? "Connected" : account.note ?? "Not connected"}
+                    </Badge>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
