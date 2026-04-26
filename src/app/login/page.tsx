@@ -1,105 +1,88 @@
-'use client'
+"use client";
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
+import { useRouter } from "next/navigation";
+import { type FormEvent, useState } from "react";
+
+import { signInWithEmail } from "@/lib/auth/actions";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
-      const result = await response.json()
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccess(false);
 
-      if (result.success && result.data?.session) {
-        // Set cookies for middleware
-        const session = result.data.session
-        document.cookie = `sb-access-token=${session.access_token}; path=/; max-age=${session.expires_in || 3600}; samesite=lax`
-        document.cookie = `sb-refresh-token=${session.refresh_token}; path=/; max-age=${60 * 60 * 24 * 7 * 4}; samesite=lax`
-        if (session.user?.id && session.user?.email) {
-          window.localStorage.setItem(
-            'local-auth-user',
-            JSON.stringify({ id: session.user.id, email: session.user.email })
-          )
-        }
+    const result = await signInWithEmail(email, password);
 
-        router.push('/dashboard')
-        router.refresh()
-      } else {
-        setError(result.error?.message || 'Login failed')
-      }
-    } catch {
-      setError('Network error while logging in')
-    } finally {
-      setLoading(false)
+    if (!result.success) {
+      setError(result.error);
+      setLoading(false);
+      return;
     }
-  }
+
+    setSuccess(true);
+    router.push("/dashboard");
+    router.refresh();
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl text-center">Welcome Back</CardTitle>
+          <CardTitle className="text-center text-2xl">Вход</CardTitle>
           <CardDescription className="text-center">
-            Sign in to your Креатив-студия account
+            Войдите в аккаунт Креатив-студии
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="your@email.com"
+                placeholder="you@example.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
+                onChange={(event) => setEmail(event.target.value)}
                 disabled={loading}
+                required
               />
             </div>
+
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">Пароль</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="Введите пароль"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
+                onChange={(event) => setPassword(event.target.value)}
                 disabled={loading}
+                minLength={6}
+                required
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {success ? <p className="text-sm text-green-600">Успешный вход, перенаправляем...</p> : null}
+
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? "Вход..." : "Войти"}
             </Button>
           </form>
         </CardContent>
-        <CardFooter className="flex justify-center">
-          <p className="text-sm text-muted-foreground">
-            Don&apos;t have an account?{' '}
-            <a href="/register" className="text-primary hover:underline">
-              Sign up
-            </a>
-          </p>
-        </CardFooter>
       </Card>
     </div>
-  )
+  );
 }

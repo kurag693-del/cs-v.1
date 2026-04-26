@@ -1,108 +1,168 @@
-import type { ModerationResult } from './types'
+"use server";
 
-// Content moderation using LLM-based approach
-export class ContentModerator {
-  private moderationPrompt: string = `
-You are a content moderation system. Analyze the following user prompt and determine if it violates content policies.
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { z } from "zod";
 
-POLICIES:
-- No hate speech, harassment, or discriminatory content
-- No violence, threats, or self-harm
-- No sexually explicit content
-- No illegal activities or promotion of illegal acts
-- No spam or phishing attempts
-- No personal information or doxxing
-- Respect copyright and intellectual property
+import { routeModel, type SubscriptionTier } from "@/lib/ai/router";
 
-Analyze the prompt and return ONLY a JSON object with this structure:
-{
-  "isApproved": boolean,
-  "categories": string[],
-  "severity": "low" | "medium" | "high" | "critical",
-  "reason": string,
-  "flags": string[]
+const MODERATION_PROMPT = readFileSync(
+  path.join(process.cwd(), "prompts", "v1_content_moderation.md"),
+  "utf-8"
+);
+
+const ModerationFlagSchema = z.object({
+  category: z.string().min(1),
+  severity: z.enum(["low", "medium", "high"]),
+  quote: z.string().min(1),
+});
+
+const ModerationResponseSchema = z.object({
+  is_approved: z.boolean(),
+  risk_level: z.number().min(0).max(5),
+  flags: z.array(ModerationFlagSchema),
+  auto_fix_suggestion: z.string().nullable(),
+  brand_alignment_score: z.number().min(0).max(1),
+  requires_human_review: z.boolean(),
+});
+
+export type ModerationFlag = z.infer<typeof ModerationFlagSchema>;
+
+export type ModerationResult = {
+  isApproved: boolean;
+  flags: ModerationFlag[];
+  suggestion?: string;
+  // Оставляем поле reason для совместимости с существующим кодом генерации.
+  reason: string;
+};
+
+function buildPromptInput(text: string, brandRules?: unknown): string {
+  return [
+    MODERATION_PROMPT,
+    "",
+    `{{content_text}}: ${text}`,
+    "{{content_type}}: post",
+    `{{brand_rules_json}}: ${JSON.stringify(brandRules ?? {})}`,
+    "{{platform_policy}}: Instagram",
+  ].join("\n");
 }
 
-USER PROMPT:
-{{PROMPT}}
+function extractJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end < 0 || end <= start) return null;
+  return raw.slice(start, end + 1);
+}
 
-Return JSON only, no additional text.
-`
+function fallbackRejected(reason: string): ModerationResult {
+  return {
+    isApproved: false,
+    flags: [
+      {
+        category: "moderation_error",
+        severity: "high",
+        quote: reason,
+      },
+    ],
+    suggestion: "Проверьте текст вручную и повторите запрос.",
+    reason,
+  };
+}
 
-  // In a real implementation, this would fetch from a file
-  // For now, using inline prompt
-  async moderateContent(prompt: string): Promise<ModerationResult> {
-    // Basic keyword filtering (fast path)
-    const blockedKeywords = [
-      'hate', 'kill', 'die', 'suicide', 'bomb', 'terror',
-      'racist', 'nazi', 'slur', 'rape', 'pedophile',
-      'ssn', 'social security', 'credit card', 'password'
-    ]
-
-    const lowerPrompt = prompt.toLowerCase()
-    const foundKeywords = blockedKeywords.filter(kw => lowerPrompt.includes(kw))
-
-    if (foundKeywords.length > 0) {
-      return {
-        isApproved: false,
-        categories: ['violence', 'hate_speech'],
-        severity: 'high',
-        reason: `Blocked keywords detected: ${foundKeywords.join(', ')}`,
-        flags: foundKeywords,
-      }
-    }
-
-    // For now, simulate LLM moderation (in production, call LiteLLM/OpenRouter)
-    // This is a placeholder - would integrate with routeModel() and actual LLM call
-    return this.simulateModeration(prompt)
+async function runGeminiModeration(
+  modelName: string,
+  promptInput: string,
+  temperature: number,
+  maxTokens: number
+): Promise<string> {
+  const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GOOGLE_API_KEY (или GEMINI_API_KEY) не задан");
   }
 
-  private async simulateModeration(prompt: string): Promise<ModerationResult> {
-    // Simple heuristic-based moderation for demo
-    const toxicIndicators = ['fuck', 'shit', 'asshole', 'bitch', 'damn']
-    const toxicCount = toxicIndicators.filter(word => 
-      prompt.toLowerCase().includes(word)
-    ).length
+  const client = new GoogleGenerativeAI(apiKey);
+  const model = client.getGenerativeModel({ model: modelName });
+  const response = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: promptInput }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+      responseMimeType: "application/json",
+    },
+  });
 
-    if (toxicCount >= 3) {
-      return {
-        isApproved: false,
-        categories: ['toxicity'],
-        severity: 'medium',
-        reason: 'High toxicity detected in prompt',
-        flags: ['toxicity'],
+  return response.response.text();
+}
+
+async function moderateContent(
+  text: string,
+  brandRules?: any
+): Promise<ModerationResult> {
+  try {
+    const tier: SubscriptionTier =
+      brandRules && typeof brandRules === "object" && "tier" in brandRules
+        ? (brandRules.tier as SubscriptionTier)
+        : "FREE";
+
+    const route = routeModel("moderation", tier);
+    const promptInput = buildPromptInput(text, brandRules);
+
+    let raw = "";
+    try {
+      raw = await runGeminiModeration(
+        route.model,
+        promptInput,
+        route.temperature,
+        route.maxTokens
+      );
+    } catch (primaryError) {
+      if (!route.fallbackModel) {
+        throw primaryError;
       }
+      raw = await runGeminiModeration(
+        route.fallbackModel,
+        promptInput,
+        route.temperature,
+        route.maxTokens
+      );
     }
 
-    // Length checks
-    if (prompt.length < 5) {
-      return {
-        isApproved: false,
-        categories: ['quality'],
-        severity: 'low',
-        reason: 'Prompt too short',
-        flags: ['too_short'],
-      }
+    const jsonPayload = extractJsonObject(raw);
+    if (!jsonPayload) {
+      return fallbackRejected("Не удалось извлечь JSON из ответа модерации");
     }
 
-    if (prompt.length > 5000) {
-      return {
-        isApproved: false,
-        categories: ['quality'],
-        severity: 'low',
-        reason: 'Prompt exceeds maximum length',
-        flags: ['too_long'],
-      }
+    const parsedJson = JSON.parse(jsonPayload) as unknown;
+    const validated = ModerationResponseSchema.safeParse(parsedJson);
+    if (!validated.success) {
+      return fallbackRejected("Ответ модерации не прошел валидацию Zod");
     }
+
+    const normalized = validated.data;
+    const hasHighFlags = normalized.flags.some((flag) => flag.severity === "high");
+    const approved = normalized.is_approved && normalized.risk_level < 4 && !hasHighFlags;
+
+    console.log(`moderation cost: $${route.estimatedCost.toFixed(6)}`);
 
     return {
-      isApproved: true,
-      categories: [],
-      severity: 'low',
-      reason: 'Content approved',
-      flags: [],
-    }
+      isApproved: approved,
+      flags: normalized.flags,
+      suggestion: normalized.auto_fix_suggestion ?? undefined,
+      reason: approved
+        ? "Content approved"
+        : `Content rejected (risk_level=${normalized.risk_level})`,
+    };
+  } catch (error: unknown) {
+    console.error("moderateContent error:", error);
+    return fallbackRejected(
+      error instanceof Error ? error.message : "Неизвестная ошибка модерации"
+    );
   }
 }
 
-export const moderator = new ContentModerator()
+export { moderateContent };
+
+export const moderator = {
+  moderateContent,
+};

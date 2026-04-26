@@ -51,6 +51,7 @@ else {
 # 4. Next.js
 Write-Host ""
 Write-Host "Starting Next.js dev server..." -ForegroundColor Cyan
+Write-Host "Auth mode: local (Supabase disabled for dev/tests)" -ForegroundColor Cyan
 Write-Host "App:   http://localhost:3000" -ForegroundColor Cyan
 Write-Host "Mail:  http://localhost:8025" -ForegroundColor Cyan
 Write-Host "Stop:  Press Ctrl+C" -ForegroundColor Yellow
@@ -61,4 +62,5 @@ if (Test-PortOpen 3000) {
     exit 1
 }
 
+$env:AUTH_MODE = "local"
 npm run next:dev

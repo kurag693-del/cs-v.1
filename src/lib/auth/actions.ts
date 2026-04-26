@@ -1,193 +1,234 @@
-'use server'
+"use server";
 
-import { createServerClient } from '@/lib/auth/supabase'
-import { prisma } from '@/lib/db'
-import { revalidatePath } from 'next/cache'
-import { redirect } from 'next/navigation'
-import { z } from 'zod'
-import crypto from 'node:crypto'
+import { createClient, type Session, type User } from "@supabase/supabase-js";
 
-const registerSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-})
+import { prisma } from "@/lib/db/prisma";
+import { authCredentialsSchema } from "@/lib/validation/auth";
 
-const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(1, 'Password is required'),
-})
+type AuthSuccessResult = {
+  success: true;
+  data: User;
+  user: User;
+  session?: Session | null;
+  message?: string;
+};
 
-function hasSupabaseConfig() {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY))
+type AuthErrorResult = {
+  success: false;
+  error: string;
+};
+
+type AuthResult = AuthSuccessResult | AuthErrorResult;
+
+type SignOutResult = {
+  success: boolean;
+};
+
+function shouldUseSupabaseAuth(): boolean {
+  const mode = process.env.AUTH_MODE?.toLowerCase();
+  if (mode === "local") return false;
+  if (mode === "supabase") return true;
+
+  return process.env.NODE_ENV === "production";
 }
 
-function shouldUseSupabase() {
-  const mode = process.env.AUTH_MODE?.toLowerCase() ?? 'auto'
-  if (mode === 'local') return false
-  if (mode === 'supabase') return true
-  return hasSupabaseConfig()
-}
+function createSupabaseServerClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export async function registerUser(formData: FormData) {
-  const validated = registerSchema.safeParse({
-    email: formData.get('email'),
-    password: formData.get('password'),
-  })
-
-  if (!validated.success) {
-    return {
-      success: false,
-      error: validated.error.issues[0]?.message || 'Invalid input',
-    }
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Supabase environment variables are not configured");
   }
 
-  const { email, password } = validated.data
+  return createClient(supabaseUrl, supabaseAnonKey);
+}
+
+function mapLocalUserToSupabaseUser(user: { id: string; email: string }): User {
+  return {
+    id: user.id,
+    aud: "authenticated",
+    role: "authenticated",
+    email: user.email,
+    email_confirmed_at: new Date().toISOString(),
+    phone: "",
+    confirmation_sent_at: null,
+    confirmed_at: new Date().toISOString(),
+    last_sign_in_at: new Date().toISOString(),
+    app_metadata: {},
+    user_metadata: {},
+    identities: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    is_anonymous: false,
+  };
+}
+
+export async function signInWithEmail(
+  email: string,
+  password: string
+): Promise<AuthResult> {
   try {
-    if (!shouldUseSupabase()) {
-      const existing = await prisma.user.findUnique({ where: { email } })
-      if (existing) {
-        return { success: false, error: 'User already exists' }
-      }
-
-      await prisma.user.create({
-        data: {
-          email,
-          password,
-          name: email.split('@')[0],
-        },
-      })
-
-      return {
-        success: true,
-        message: 'Registration successful. You can now sign in.',
-      }
-    }
-
-    const supabase = createServerClient()
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
-      },
-    })
-
-    if (signUpError) {
-      console.error('SignUp error:', signUpError)
+    const parsed = authCredentialsSchema.safeParse({ email, password });
+    if (!parsed.success) {
       return {
         success: false,
-        error: signUpError.message,
-      }
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
     }
 
-    if (!authData.user) {
-      return {
-        success: false,
-        error: 'Failed to create user',
-      }
-    }
+    if (!shouldUseSupabaseAuth()) {
+      const localUser = await prisma.user.findUnique({
+        where: { email: parsed.data.email },
+        select: { id: true, email: true, password: true },
+      });
 
-    // Profile bootstrap is skipped until Supabase table typing is aligned.
-
-    return {
-      success: true,
-      message: 'Registration successful! Please check your email to confirm.',
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unexpected error occurred'
-    console.error('Registration error:', err)
-    return {
-      success: false,
-      error: message,
-    }
-  }
-}
-
-export async function loginUser(formData: FormData) {
-  const validated = loginSchema.safeParse({
-    email: formData.get('email'),
-    password: formData.get('password'),
-  })
-
-  if (!validated.success) {
-    return {
-      success: false,
-      error: validated.error.issues[0]?.message || 'Invalid input',
-    }
-  }
-
-  const { email, password } = validated.data
-  try {
-    if (!shouldUseSupabase()) {
-      const user = await prisma.user.findUnique({ where: { email } })
-      if (!user || user.password !== password) {
+      if (!localUser || localUser.password !== parsed.data.password) {
         return {
           success: false,
-          error: 'Invalid credentials',
-        }
+          error: "Invalid login credentials",
+        };
       }
 
+      const mappedUser = mapLocalUserToSupabaseUser(localUser);
       return {
         success: true,
-        session: {
-          access_token: `local_${crypto.randomUUID()}`,
-          refresh_token: `local_refresh_${crypto.randomUUID()}`,
-          expires_in: 3600,
-          user: {
-            id: user.id,
-            email: user.email,
-          },
-        },
-      }
+        data: mappedUser,
+        user: mappedUser,
+        session: null,
+      };
     }
 
-    const supabase = createServerClient()
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
 
-    if (error) {
-      console.error('Login error:', error)
+    if (error || !data.user) {
       return {
         success: false,
-        error: error.message,
-      }
-    }
-
-    if (!data.session) {
-      return {
-        success: false,
-        error: 'No session created',
-      }
+        error: error?.message ?? "Failed to sign in",
+      };
     }
 
     return {
       success: true,
+      data: data.user,
+      user: data.user,
       session: data.session,
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'An unexpected error occurred'
-    console.error('Login error:', err)
+    };
+  } catch (error: unknown) {
+    console.error("signInWithEmail error:", error);
     return {
       success: false,
-      error: message,
-    }
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }
 
-export async function logoutUser() {
-  const supabase = createServerClient()
-
+export async function signUpWithEmail(
+  email: string,
+  password: string
+): Promise<AuthResult> {
   try {
-    const { error } = await supabase.auth.signOut()
-    if (error) {
-      console.error('Logout error:', error)
+    const parsed = authCredentialsSchema.safeParse({ email, password });
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
     }
-  } catch (err) {
-    console.error('Logout error:', err)
-  }
 
-  revalidatePath('/', 'layout')
-  redirect('/login')
+    if (!shouldUseSupabaseAuth()) {
+      const existing = await prisma.user.findUnique({
+        where: { email: parsed.data.email },
+        select: { id: true },
+      });
+
+      if (existing) {
+        return {
+          success: false,
+          error: "User already exists",
+        };
+      }
+
+      const created = await prisma.user.create({
+        data: {
+          email: parsed.data.email,
+          password: parsed.data.password,
+          name: parsed.data.email.split("@")[0],
+        },
+        select: { id: true, email: true },
+      });
+
+      const mappedUser = mapLocalUserToSupabaseUser(created);
+      return {
+        success: true,
+        data: mappedUser,
+        user: mappedUser,
+        message: "Registration successful",
+      };
+    }
+
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase.auth.signUp(parsed.data);
+
+    if (error || !data.user) {
+      return {
+        success: false,
+        error: error?.message ?? "Failed to sign up",
+      };
+    }
+
+    return {
+      success: true,
+      data: data.user,
+      user: data.user,
+      message: "Registration successful",
+    };
+  } catch (error: unknown) {
+    console.error("signUpWithEmail error:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+export async function signOut(): Promise<SignOutResult> {
+  try {
+    if (!shouldUseSupabaseAuth()) {
+      return { success: true };
+    }
+
+    const supabase = createSupabaseServerClient();
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error("signOut error:", error);
+      return { success: false };
+    }
+
+    return { success: true };
+  } catch (error: unknown) {
+    console.error("signOut error:", error);
+    return { success: false };
+  }
+}
+
+export async function loginUser(formData: FormData): Promise<AuthResult> {
+  const emailValue = formData.get("email");
+  const passwordValue = formData.get("password");
+
+  const email = typeof emailValue === "string" ? emailValue : "";
+  const password = typeof passwordValue === "string" ? passwordValue : "";
+
+  return signInWithEmail(email, password);
+}
+
+export async function registerUser(formData: FormData): Promise<AuthResult> {
+  const emailValue = formData.get("email");
+  const passwordValue = formData.get("password");
+
+  const email = typeof emailValue === "string" ? emailValue : "";
+  const password = typeof passwordValue === "string" ? passwordValue : "";
+
+  return signUpWithEmail(email, password);
 }

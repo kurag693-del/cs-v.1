@@ -1,12 +1,14 @@
-'use client'
+"use client";
 
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { CreateBrandSchema, type CreateBrandInput } from '@/lib/validation/brand'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+
+import { createBrand, updateBrand } from "@/lib/brands/actions";
+import { CreateBrandSchema, type CreateBrandInput } from "@/lib/validation/brand";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -15,176 +17,153 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { TagInput } from '@/components/ui/tag-input'
-import { Checkbox } from '@/components/ui/checkbox'
-import { useToast } from '@/components/ui/use-toast'
-import { useTransition } from 'react'
-import { createBrand } from '@/lib/brands/actions'
-import { ColorPicker } from '@/components/ui/color-picker'
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { TagInput } from "@/components/ui/tag-input";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
 
-const formSchema = CreateBrandSchema
+type BrandFormProps = {
+  userId: string;
+  mode?: "create" | "edit";
+  brandId?: string;
+  initialData?: Partial<CreateBrandInput>;
+  onSuccess?: () => void;
+};
 
-export type BrandFormValues = z.infer<typeof formSchema>
+const defaultValues: CreateBrandInput = {
+  name: "",
+  tone: "",
+  vocabularyRules: [],
+  forbiddenWords: [],
+  structureTemplate: "",
+  examples: "",
+};
 
-interface BrandFormProps {
-  userId: string
-  initialData?: Partial<BrandFormValues>
-  onSuccess?: () => void
-}
+export function BrandForm({
+  userId,
+  mode = "create",
+  brandId,
+  initialData,
+  onSuccess,
+}: BrandFormProps) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [formError, setFormError] = useState<string | null>(null);
 
-export function BrandForm({ userId, initialData, onSuccess }: BrandFormProps) {
-  const { toast } = useToast()
-  const [isPending, startTransition] = useTransition()
+  const resolvedInitialValues = useMemo<CreateBrandInput>(
+    () => ({
+      name: initialData?.name ?? defaultValues.name,
+      tone: initialData?.tone ?? defaultValues.tone,
+      vocabularyRules: initialData?.vocabularyRules ?? defaultValues.vocabularyRules,
+      forbiddenWords: initialData?.forbiddenWords ?? defaultValues.forbiddenWords,
+      structureTemplate: initialData?.structureTemplate ?? defaultValues.structureTemplate,
+      examples: initialData?.examples ?? defaultValues.examples,
+    }),
+    [initialData]
+  );
 
-  const form = useForm<BrandFormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: initialData?.name || '',
-      description: initialData?.description || '',
-      tone: initialData?.tone || '',
-      voice: initialData?.voice || '',
-      colors: initialData?.colors || [],
-      forbiddenWords: initialData?.forbiddenWords || [],
-      examples: initialData?.examples || '',
-      website: initialData?.website || '',
-      industry: initialData?.industry || '',
-      isActive: initialData?.isActive ?? true,
-    },
-  })
+  const form = useForm<CreateBrandInput>({
+    resolver: zodResolver(CreateBrandSchema),
+    defaultValues: resolvedInitialValues,
+  });
 
-  async function onSubmit(values: BrandFormValues) {
-    startTransition(async () => {
-      const formData = new FormData()
-      formData.set('name', values.name)
-      formData.set('description', values.description || '')
-      formData.set('tone', values.tone)
-      formData.set('voice', values.voice || '')
-      formData.set('colors', JSON.stringify(values.colors || []))
-      formData.set('forbiddenWords', JSON.stringify(values.forbiddenWords || []))
-      formData.set('examples', values.examples || '')
-      formData.set('website', values.website || '')
-      formData.set('industry', values.industry || '')
-      formData.set('isActive', String(values.isActive))
+  useEffect(() => {
+    form.reset(resolvedInitialValues);
+  }, [form, resolvedInitialValues]);
 
-      const result = await createBrand(formData, userId)
+  const onSubmit = async (values: CreateBrandInput) => {
+    setFormError(null);
 
-      if (result.success) {
-        toast({
-          title: 'Успех!',
-          description: 'Бренд успешно создан',
-          variant: 'default',
-        })
-        form.reset()
-        onSuccess?.()
-      } else {
-        toast({
-          title: 'Ошибка',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
-    })
-  }
+    const result =
+      mode === "edit" && brandId
+        ? await updateBrand(brandId, values, userId)
+        : await createBrand(values, userId);
+
+    if (!result.success) {
+      const message =
+        result.error?.message ?? (mode === "edit" ? "Не удалось обновить бренд" : "Не удалось создать бренд");
+      setFormError(message);
+      toast({
+        title: "Ошибка",
+        description: message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    toast({
+      title: "Готово",
+      description: mode === "edit" ? "Бренд успешно обновлен" : "Бренд успешно создан",
+    });
+    form.reset(defaultValues);
+    onSuccess?.();
+    router.refresh();
+  };
+
+  const isSubmitting = form.formState.isSubmitting;
 
   return (
-    <Card>
+    <Card className="mx-auto w-full max-w-3xl">
       <CardHeader>
-        <CardTitle>{initialData ? 'Редактировать бренд' : 'Создать бренд'}</CardTitle>
+        <CardTitle>{mode === "edit" ? "Редактирование бренда" : "Создание бренда"}</CardTitle>
         <CardDescription>
-          Заполните информацию о бренде для настройки генерации контента
+          {mode === "edit"
+            ? "Обновите параметры бренда"
+            : "Заполните параметры бренда для генерации контента"}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <form className="grid grid-cols-1 gap-6 md:grid-cols-2" onSubmit={form.handleSubmit(onSubmit)}>
             <FormField
               control={form.control}
               name="name"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Название бренда *</FormLabel>
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Название</FormLabel>
                   <FormControl>
-                    <Input placeholder="TechFlow" {...field} />
+                    <Input placeholder="Например, Creative Studio" {...field} disabled={isSubmitting} />
                   </FormControl>
-                  <FormMessage />
+                  <FormMessage>{form.formState.errors.name?.message}</FormMessage>
                 </FormItem>
               )}
             />
 
             <FormField
               control={form.control}
-              name="description"
+              name="tone"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Описание</FormLabel>
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Тон</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="Краткое описание бренда" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="tone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Тон *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Professional yet approachable" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="voice"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Голос бренда</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Innovative and reliable" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="industry"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Отрасль</FormLabel>
-                  <FormControl>
-                    <Input placeholder="SaaS, Data Analytics, E-commerce..." {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="colors"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Цветовая палитра</FormLabel>
-                  <FormControl>
-                    <ColorPicker
-                      colors={field.value || []}
-                      onChange={field.onChange}
+                    <Textarea
+                      placeholder="Опишите стиль и тон коммуникации"
+                      className="min-h-24"
+                      {...field}
+                      disabled={isSubmitting}
                     />
                   </FormControl>
-                  <FormDescription>Выберите до 5 цветов бренда</FormDescription>
-                  <FormMessage />
+                  <FormMessage>{form.formState.errors.tone?.message}</FormMessage>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="vocabularyRules"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Vocabulary Rules</FormLabel>
+                  <FormControl>
+                    <TagInput
+                      tags={field.value ?? []}
+                      onChange={field.onChange}
+                      placeholder="Добавьте правило и нажмите Enter"
+                    />
+                  </FormControl>
+                  <FormDescription>Слова и фразы, которые бренд предпочитает использовать</FormDescription>
+                  <FormMessage>{form.formState.errors.vocabularyRules?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
             />
@@ -194,16 +173,35 @@ export function BrandForm({ userId, initialData, onSuccess }: BrandFormProps) {
               name="forbiddenWords"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Запрещенные слова</FormLabel>
+                  <FormLabel>Forbidden Words</FormLabel>
                   <FormControl>
                     <TagInput
-                      tags={field.value || []}
+                      tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Введите слово и нажмите Enter..."
+                      placeholder="Добавьте слово и нажмите Enter"
                     />
                   </FormControl>
-                  <FormDescription>Слова, которые будут исключены из сгенерированного контента</FormDescription>
-                  <FormMessage />
+                  <FormDescription>Слова, которые нельзя использовать в контенте</FormDescription>
+                  <FormMessage>{form.formState.errors.forbiddenWords?.message as string | undefined}</FormMessage>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="structureTemplate"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Structure Template</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Например: Hook -> Value -> CTA"
+                      className="min-h-24"
+                      {...field}
+                      disabled={isSubmitting}
+                    />
+                  </FormControl>
+                  <FormMessage>{form.formState.errors.structureTemplate?.message}</FormMessage>
                 </FormItem>
               )}
             />
@@ -212,61 +210,34 @@ export function BrandForm({ userId, initialData, onSuccess }: BrandFormProps) {
               control={form.control}
               name="examples"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Примеры контента</FormLabel>
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Examples (JSON)</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Примеры успешных постов, стиль общения..."
-                      className="min-h-[120px]"
+                      placeholder='["Пример поста 1", "Пример поста 2"]'
+                      className="min-h-32 font-mono text-sm"
                       {...field}
+                      disabled={isSubmitting}
                     />
                   </FormControl>
-                  <FormMessage />
+                  <FormDescription>Можно хранить JSON-строку с примерами текстов</FormDescription>
+                  <FormMessage>{form.formState.errors.examples?.message}</FormMessage>
                 </FormItem>
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="website"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Сайт</FormLabel>
-                  <FormControl>
-                    <Input placeholder="https://example.com" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {formError ? (
+              <p className="md:col-span-2 text-sm text-destructive" role="alert">
+                {formError}
+              </p>
+            ) : null}
 
-            <FormField
-              control={form.control}
-              name="isActive"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                  <FormControl>
-                    <Checkbox
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                  <div className="space-y-1 leading-none">
-                    <FormLabel>Активный бренд</FormLabel>
-                    <FormDescription>
-                      Разрешить генерацию контента для этого бренда
-                    </FormDescription>
-                  </div>
-                </FormItem>
-              )}
-            />
-
-            <Button type="submit" className="w-full" disabled={isPending}>
-              {isPending ? 'Создание...' : initialData ? 'Обновить' : 'Создать бренд'}
+            <Button type="submit" className="md:col-span-2 w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Сохранение..." : mode === "edit" ? "Сохранить изменения" : "Создать бренд"}
             </Button>
           </form>
         </Form>
       </CardContent>
     </Card>
-  )
+  );
 }

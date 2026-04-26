@@ -1,167 +1,288 @@
-'use server'
+"use server";
 
-import { prisma } from '@/lib/db'
-import { CreateBrandSchema, UpdateBrandSchema, type Result } from '@/lib/validation/brand'
-import { revalidatePath } from 'next/cache'
+import { z } from "zod";
 
-export async function createBrand(data: FormData, userId: string): Promise<Result<any>> {
+import { prisma } from "@/lib/db/prisma";
+import {
+  CreateBrandSchema,
+  type CreateBrandInput,
+  UpdateBrandSchema,
+  type UpdateBrandInput,
+} from "@/lib/validation/brand";
+
+type ActionError = {
+  code: string;
+  message: string;
+};
+
+type ActionResult<T> = {
+  success: boolean;
+  data?: T;
+  error?: ActionError;
+};
+
+const idSchema = z.string().min(1, "Идентификатор обязателен");
+
+function toActionError(code: string, message: string): ActionError {
+  return { code, message };
+}
+
+export async function createBrand(
+  input: CreateBrandInput,
+  userId: string
+): Promise<ActionResult<{ id: string; name: string; tone: string | null }>> {
   try {
-    const rawData = {
-      name: data.get('name') as string,
-      description: (data.get('description') as string) || undefined,
-      tone: data.get('tone') as string,
-      voice: (data.get('voice') as string) || undefined,
-      colors: JSON.parse((data.get('colors') as string) || '[]'),
-      forbiddenWords: JSON.parse((data.get('forbiddenWords') as string) || '[]'),
-      examples: (data.get('examples') as string) || undefined,
-      website: (data.get('website') as string) || undefined,
-      industry: (data.get('industry') as string) || undefined,
-      isActive: (data.get('isActive') as string) === 'true',
-    }
+    const parsedInput = CreateBrandSchema.safeParse(input);
+    const parsedUserId = idSchema.safeParse(userId);
 
-    const validated = CreateBrandSchema.safeParse(rawData)
-
-    if (!validated.success) {
+    if (!parsedInput.success) {
       return {
         success: false,
-        error: 'Ошибка валидации',
-        details: validated.error.flatten().fieldErrors,
-      }
+        error: toActionError(
+          "VALIDATION_ERROR",
+          parsedInput.error.issues[0]?.message ?? "Некорректные данные бренда"
+        ),
+      };
     }
 
-    const brand = await prisma.brand.create({
-      data: {
-        ...validated.data,
-        user: { connect: { id: userId } },
-        metadata: {
-          forbiddenWords: validated.data.forbiddenWords || [],
-          examples: validated.data.examples || '',
-        },
-      },
-    })
+    if (!parsedUserId.success) {
+      return {
+        success: false,
+        error: toActionError(
+          "VALIDATION_ERROR",
+          parsedUserId.error.issues[0]?.message ?? "Некорректный userId"
+        ),
+      };
+    }
 
-    revalidatePath('/dashboard/brands')
+    const existingBrand = await prisma.brand.findFirst({
+      where: {
+        userId: parsedUserId.data,
+        name: parsedInput.data.name,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (existingBrand) {
+      return {
+        success: false,
+        error: toActionError("BRAND_ALREADY_EXISTS", "Бренд с таким названием уже существует"),
+      };
+    }
+
+    const createdBrand = await prisma.brand.create({
+      data: {
+        userId: parsedUserId.data,
+        name: parsedInput.data.name,
+        tone: parsedInput.data.tone ?? null,
+      },
+      select: {
+        id: true,
+        name: true,
+        tone: true,
+      },
+    });
 
     return {
       success: true,
-      data: brand,
-    }
-  } catch (err: any) {
-    console.error('Create brand error:', err)
+      data: createdBrand,
+    };
+  } catch (error: unknown) {
+    console.error("createBrand error:", error);
     return {
       success: false,
-      error: err.message || 'Ошибка при создании бренда',
-    }
+      error: toActionError("INTERNAL_ERROR", "Не удалось создать бренд"),
+    };
   }
 }
 
-export async function getBrands(userId: string) {
+export async function getBrands(
+  userId: string
+): Promise<
+  ActionResult<Array<{ id: string; name: string; tone: string | null; createdAt: Date }>>
+> {
   try {
+    const parsedUserId = idSchema.safeParse(userId);
+
+    if (!parsedUserId.success) {
+      return {
+        success: false,
+        error: toActionError(
+          "VALIDATION_ERROR",
+          parsedUserId.error.issues[0]?.message ?? "Некорректный userId"
+        ),
+      };
+    }
+
     const brands = await prisma.brand.findMany({
       where: {
-        userId,
+        userId: parsedUserId.data,
         deletedAt: null,
       },
       orderBy: {
-        createdAt: 'desc',
+        createdAt: "desc",
       },
-    })
+      select: {
+        id: true,
+        name: true,
+        tone: true,
+        createdAt: true,
+      },
+    });
 
     return {
       success: true,
       data: brands,
-    }
-  } catch (err: any) {
-    console.error('Get brands error:', err)
+    };
+  } catch (error: unknown) {
+    console.error("getBrands error:", error);
     return {
       success: false,
-      error: err.message || 'Ошибка при загрузке брендов',
-    }
+      error: toActionError("INTERNAL_ERROR", "Не удалось получить список брендов"),
+    };
   }
 }
 
-export async function updateBrand(id: string, data: FormData, userId: string): Promise<Result<any>> {
+export async function updateBrand(
+  brandId: string,
+  input: UpdateBrandInput,
+  userId: string
+): Promise<ActionResult<{ id: string; name: string; tone: string | null; updatedAt: Date }>> {
   try {
-    const rawData = {
-      name: data.get('name') as string,
-      description: (data.get('description') as string) || undefined,
-      tone: data.get('tone') as string,
-      voice: (data.get('voice') as string) || undefined,
-      colors: JSON.parse((data.get('colors') as string) || '[]'),
-      forbiddenWords: JSON.parse((data.get('forbiddenWords') as string) || '[]'),
-      examples: (data.get('examples') as string) || undefined,
-      website: (data.get('website') as string) || undefined,
-      industry: (data.get('industry') as string) || undefined,
-      isActive: (data.get('isActive') as string) === 'true',
-    }
+    const parsedBrandId = idSchema.safeParse(brandId);
+    const parsedUserId = idSchema.safeParse(userId);
+    const parsedInput = UpdateBrandSchema.safeParse(input);
 
-    const validated = UpdateBrandSchema.safeParse({ ...rawData, id })
-
-    if (!validated.success) {
+    if (!parsedBrandId.success || !parsedUserId.success) {
       return {
         success: false,
-        error: 'Ошибка валидации',
-        details: validated.error.flatten().fieldErrors,
+        error: toActionError("VALIDATION_ERROR", "Некорректный идентификатор"),
+      };
+    }
+
+    if (!parsedInput.success) {
+      return {
+        success: false,
+        error: toActionError(
+          "VALIDATION_ERROR",
+          parsedInput.error.issues[0]?.message ?? "Некорректные данные бренда"
+        ),
+      };
+    }
+
+    const existingBrand = await prisma.brand.findFirst({
+      where: {
+        id: parsedBrandId.data,
+        userId: parsedUserId.data,
+        deletedAt: null,
+      },
+      select: { id: true, name: true },
+    });
+
+    if (!existingBrand) {
+      return {
+        success: false,
+        error: toActionError("NOT_FOUND", "Бренд не найден или доступ запрещен"),
+      };
+    }
+
+    if (parsedInput.data.name && parsedInput.data.name !== existingBrand.name) {
+      const duplicate = await prisma.brand.findFirst({
+        where: {
+          userId: parsedUserId.data,
+          name: parsedInput.data.name,
+          deletedAt: null,
+          id: { not: parsedBrandId.data },
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        return {
+          success: false,
+          error: toActionError("BRAND_ALREADY_EXISTS", "Бренд с таким названием уже существует"),
+        };
       }
     }
 
-    const brand = await prisma.brand.update({
-      where: {
-        id,
-        userId,
-        deletedAt: null,
-      },
+    const updatedBrand = await prisma.brand.update({
+      where: { id: parsedBrandId.data },
       data: {
-        ...validated.data,
-        metadata: {
-          forbiddenWords: (validated.data as any).forbiddenWords || [],
-          examples: (validated.data as any).examples || '',
-        },
-        updatedAt: new Date(),
+        ...(parsedInput.data.name !== undefined ? { name: parsedInput.data.name } : {}),
+        ...(parsedInput.data.tone !== undefined ? { tone: parsedInput.data.tone } : {}),
       },
-    })
-
-    revalidatePath('/dashboard/brands')
+      select: {
+        id: true,
+        name: true,
+        tone: true,
+        updatedAt: true,
+      },
+    });
 
     return {
       success: true,
-      data: brand,
-    }
-  } catch (err: any) {
-    console.error('Update brand error:', err)
+      data: updatedBrand,
+    };
+  } catch (error: unknown) {
+    console.error("updateBrand error:", error);
     return {
       success: false,
-      error: err.message || 'Ошибка при обновлении бренда',
-    }
+      error: toActionError("INTERNAL_ERROR", "Не удалось обновить бренд"),
+    };
   }
 }
 
-export async function deleteBrand(id: string, userId: string): Promise<Result<any>> {
+export async function deleteBrand(
+  brandId: string,
+  userId: string
+): Promise<ActionResult<{ id: string; deletedAt: Date }>> {
   try {
-    const brand = await prisma.brand.update({
+    const parsedBrandId = idSchema.safeParse(brandId);
+    const parsedUserId = idSchema.safeParse(userId);
+
+    if (!parsedBrandId.success || !parsedUserId.success) {
+      return {
+        success: false,
+        error: toActionError("VALIDATION_ERROR", "Некорректный идентификатор"),
+      };
+    }
+
+    const existingBrand = await prisma.brand.findFirst({
       where: {
-        id,
-        userId,
+        id: parsedBrandId.data,
+        userId: parsedUserId.data,
         deletedAt: null,
       },
-      data: {
-        deletedAt: new Date(),
-        isActive: false,
-        updatedAt: new Date(),
-      },
-    })
+      select: { id: true },
+    });
 
-    revalidatePath('/dashboard/brands')
+    if (!existingBrand) {
+      return {
+        success: false,
+        error: toActionError("NOT_FOUND", "Бренд не найден или доступ запрещен"),
+      };
+    }
+
+    const deletedAt = new Date();
+    const deletedBrand = await prisma.brand.update({
+      where: { id: parsedBrandId.data },
+      data: { deletedAt },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
 
     return {
       success: true,
-      data: brand,
-    }
-  } catch (err: any) {
-    console.error('Delete brand error:', err)
+      data: deletedBrand as { id: string; deletedAt: Date },
+    };
+  } catch (error: unknown) {
+    console.error("deleteBrand error:", error);
     return {
       success: false,
-      error: err.message || 'Ошибка при удалении бренда',
-    }
+      error: toActionError("INTERNAL_ERROR", "Не удалось удалить бренд"),
+    };
   }
 }

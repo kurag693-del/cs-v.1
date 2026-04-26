@@ -1,315 +1,292 @@
-'use client'
+"use client";
 
-import { useState, useTransition } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { generateText } from '@/lib/generate/actions'
-import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { useState } from "react";
+import * as SliderPrimitive from "@radix-ui/react-slider";
+import { Check, Copy, Loader2, RefreshCcw, Save } from "lucide-react";
+
+import { generateText } from "@/lib/generate/actions";
+import { createPost } from "@/lib/posts/actions";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { useToast } from '@/components/ui/use-toast'
-import { Check, Copy, Save, Loader2 } from 'lucide-react'
-import { BrandSelect } from './BrandSelect'
-import { createPost } from '@/lib/posts/actions'
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils";
 
-const generateSchema = z.object({
-  type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
-  prompt: z.string().min(5, 'Prompt must be at least 5 characters').max(5000, 'Prompt must not exceed 5000 characters'),
-  platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']).optional(),
-  brandId: z.string().optional(),
-})
+type Platform = "Instagram" | "Telegram" | "VK" | "TikTok";
 
-type GenerateFormData = z.infer<typeof generateSchema>
+type TextGeneratorProps = {
+  userId: string;
+  availableBrands: Array<{ id: string; name: string }>;
+};
 
-interface TextGeneratorProps {
-  userId: string
-  profileId?: string
-  availableBrands: Array<{ id: string; name: string }>
-  credits: number
+type ParsedResult = {
+  hook: string;
+  body: string;
+  hashtags: string[];
+  cta: string;
+  rawText: string;
+};
+
+function Slider({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>) {
+  return (
+    <SliderPrimitive.Root
+      className={cn("relative flex w-full touch-none select-none items-center", className)}
+      {...props}
+    >
+      <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-muted">
+        <SliderPrimitive.Range className="absolute h-full bg-primary" />
+      </SliderPrimitive.Track>
+      <SliderPrimitive.Thumb className="block h-5 w-5 rounded-full border-2 border-primary bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+    </SliderPrimitive.Root>
+  );
 }
 
-export function TextGenerator({ userId, profileId, availableBrands, credits }: TextGeneratorProps) {
-  const [isPending, startTransition] = useTransition()
-  const [result, setResult] = useState<any>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const { toast } = useToast()
+function parseGeneratedText(text: string): ParsedResult {
+  const chunks = text.split("\n\n");
+  const hook = chunks[0] ?? "";
+  const body = chunks[1] ?? "";
+  const hashtags = (chunks[2] ?? "")
+    .split(" ")
+    .map((item) => item.trim())
+    .filter((item) => item.startsWith("#"));
+  const cta = chunks[3] ?? "";
 
-  const form = useForm<GenerateFormData>({
-    resolver: zodResolver(generateSchema),
-    defaultValues: {
-      type: 'social_post',
-      prompt: '',
-      platform: 'TWITTER',
-    },
-  })
+  return { hook, body, hashtags, cta, rawText: text };
+}
 
-  async function onSubmit(data: GenerateFormData) {
-    setError(null)
-    setResult(null)
+function mapPlatformToPost(platform: Platform): "INSTAGRAM" | "TIKTOK" {
+  return platform === "TikTok" ? "TIKTOK" : "INSTAGRAM";
+}
 
-    if (credits <= 0) {
-      setError('Insufficient credits. Please upgrade your plan.')
-      toast({
-        title: 'No credits remaining',
-        description: 'You need more credits to generate content.',
-        variant: 'destructive',
-      })
-      return
+export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
+  const { toast } = useToast();
+  const [topic, setTopic] = useState("");
+  const [platform, setPlatform] = useState<Platform>("Instagram");
+  const [brandId, setBrandId] = useState<string>("none");
+  const [maxLength, setMaxLength] = useState<number[]>([600]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ParsedResult | null>(null);
+
+  const runGeneration = async () => {
+    if (!topic.trim()) {
+      setError("Введите тему поста");
+      return;
     }
 
-    startTransition(async () => {
-      const formData = new FormData()
-      formData.set('type', data.type)
-      formData.set('prompt', data.prompt)
-      if (data.platform) formData.set('platform', data.platform)
-      if (data.brandId) formData.set('brandId', data.brandId)
-      if (profileId) formData.set('profileId', profileId)
+    setIsSubmitting(true);
+    setError(null);
 
-      const generationResult = await generateText(formData, userId)
+    const response = await generateText(
+      {
+        topic: topic.trim(),
+        platform,
+        brandId: brandId === "none" ? undefined : brandId,
+        maxLength: maxLength[0],
+      },
+      userId
+    );
 
-      if (generationResult.success && generationResult.data) {
-        setResult(generationResult.data)
-        toast({
-          title: 'Content generated!',
-          description: `${generationResult.data.tokens.totalTokens} tokens used`,
-          variant: 'default',
-        })
-      } else {
-        const errorMsg = generationResult.error || 'Generation failed'
-        setError(errorMsg)
-        toast({
-          title: 'Generation failed',
-          description: errorMsg,
-          variant: 'destructive',
-        })
-      }
-    })
-  }
-
-  const copyToClipboard = async () => {
-    if (result?.content) {
-      await navigator.clipboard.writeText(result.content)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+    if (!response.success) {
+      const message = response.error || "Не удалось сгенерировать текст";
+      setError(message);
       toast({
-        title: 'Copied!',
-        description: 'Content copied to clipboard',
-      })
+        title: "Ошибка генерации",
+        description: message,
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
+      return;
     }
-  }
+
+    setResult(parseGeneratedText(response.data.text));
+    toast({
+      title: "Готово",
+      description: `Модель: ${response.data.modelUsed}`,
+    });
+    setIsSubmitting(false);
+  };
+
+  const copyResult = async () => {
+    if (!result) return;
+    await navigator.clipboard.writeText(result.rawText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+    toast({ title: "Скопировано", description: "Текст сохранен в буфер" });
+  };
 
   const saveAsDraft = async () => {
-    if (!result?.content) {
+    if (!result) return;
+
+    const formData = new FormData();
+    formData.set("title", result.hook.slice(0, 80) || "Черновик поста");
+    formData.set("content", result.rawText);
+    formData.set("platform", mapPlatformToPost(platform));
+    formData.set("mediaUrls", "[]");
+    formData.set("brandId", brandId === "none" ? "" : brandId);
+    formData.set("metadata", JSON.stringify({ source: "text-generator-ui" }));
+
+    const saved = await createPost(formData, userId);
+    if (!saved.success) {
       toast({
-        title: 'Nothing to save',
-        description: 'Generate content first',
-        variant: 'destructive',
-      })
-      return
+        title: "Не удалось сохранить",
+        description: saved.error || "Ошибка сохранения черновика",
+        variant: "destructive",
+      });
+      return;
     }
 
-    const values = form.getValues()
-    const draftFormData = new FormData()
-    draftFormData.set('title', values.prompt.slice(0, 80) || 'AI Draft')
-    draftFormData.set('content', result.content)
-    draftFormData.set('platform', values.platform ?? 'TWITTER')
-    draftFormData.set('mediaUrls', '[]')
-    draftFormData.set('brandId', values.brandId ?? '')
-    draftFormData.set('metadata', JSON.stringify({ source: 'text-generator', model: result.model }))
-
-    const draftResult = await createPost(draftFormData, userId)
-    if (draftResult.success) {
-      toast({
-        title: 'Saved to drafts',
-        description: 'Draft was added to calendar',
-      })
-      return
-    }
-
-    toast({
-      title: 'Failed to save',
-      description: draftResult.error,
-      variant: 'destructive',
-    })
-  }
+    toast({ title: "Сохранено", description: "Пост сохранен как черновик" });
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle>Generate Content</CardTitle>
-          <CardDescription>
-            Create AI-powered content with your brand voice. Credits remaining: <span className="font-bold">{credits}</span>
-          </CardDescription>
+          <CardTitle>Генерация поста</CardTitle>
+          <CardDescription>Заполните параметры и получите готовый текст</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <FormField
-                control={form.control}
-                name="type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Content Type</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select content type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="social_post">Social Media Post</SelectItem>
-                        <SelectItem value="blog_outline">Blog Outline</SelectItem>
-                        <SelectItem value="ad_copy">Ad Copy</SelectItem>
-                        <SelectItem value="image_prompt">Image Prompt</SelectItem>
-                        <SelectItem value="feedback_optimizer">Feedback Optimizer</SelectItem>
-                        <SelectItem value="brand_voice">Brand Voice Guide</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Тема</p>
+            <Textarea
+              value={topic}
+              onChange={(event) => setTopic(event.target.value)}
+              placeholder="О чем будет пост?"
+              className="min-h-28"
+              disabled={isSubmitting}
+            />
+          </div>
 
-              <FormField
-                control={form.control}
-                name="platform"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Platform (optional)</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select platform" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="TWITTER">Twitter / X</SelectItem>
-                        <SelectItem value="LINKEDIN">LinkedIn</SelectItem>
-                        <SelectItem value="FACEBOOK">Facebook</SelectItem>
-                        <SelectItem value="INSTAGRAM">Instagram</SelectItem>
-                        <SelectItem value="TIKTOK">TikTok</SelectItem>
-                        <SelectItem value="YOUTUBE">YouTube</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="brandId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Brand (optional)</FormLabel>
-                    <BrandSelect
-                      brands={availableBrands}
-                      onBrandSelect={field.onChange}
-                      selectedBrandId={field.value}
-                    />
-                    <FormDescription>Use brand voice and style guidelines</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="prompt"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Prompt / Topic *</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder="Describe what you want to generate..."
-                        className="min-h-[120px]"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Be specific for better results. Include tone, audience, and key points.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <Button type="submit" className="w-full" disabled={isPending || credits <= 0}>
-                {isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  'Generate Content'
-                )}
-              </Button>
-            </form>
-          </Form>
-
-          {error && (
-            <div className="mt-4 rounded-md border border-destructive bg-destructive/10 p-4">
-              <p className="text-sm text-destructive">
-                <strong>Error:</strong> {error}
-                {error.includes('402') && (
-                  <span>
-                    {' '}
-                    <a href="/pricing" className="underline">Upgrade your plan</a>
-                  </span>
-                )}
-              </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Платформа</p>
+              <Select value={platform} onValueChange={(value) => setPlatform(value as Platform)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Instagram">Instagram</SelectItem>
+                  <SelectItem value="Telegram">Telegram</SelectItem>
+                  <SelectItem value="VK">VK</SelectItem>
+                  <SelectItem value="TikTok">TikTok</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Бренд</p>
+              <Select value={brandId} onValueChange={setBrandId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите бренд" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Без бренда</SelectItem>
+                  {availableBrands.map((brand) => (
+                    <SelectItem key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-sm font-medium">Макс. длина: {maxLength[0]} символов</p>
+            <Slider
+              value={maxLength}
+              min={120}
+              max={2000}
+              step={20}
+              onValueChange={setMaxLength}
+              disabled={isSubmitting}
+            />
+          </div>
+
+          {error ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button className="w-full" onClick={runGeneration} disabled={isSubmitting}>
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isSubmitting ? "Генерация..." : "Сгенерировать"}
+            </Button>
+            {error ? (
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={runGeneration}
+                disabled={isSubmitting}
+              >
+                <RefreshCcw className="mr-2 h-4 w-4" />
+                Повторить
+              </Button>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 
-      {result && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Generated Content</CardTitle>
-            <CardDescription>
-              Model: {result.model} | Tokens: {result.tokens?.totalTokens} | Cost: ${result.costUSD?.toFixed(4)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-md border bg-muted/50 p-4">
-              <pre className="whitespace-pre-wrap text-sm">{result.content}</pre>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={copyToClipboard}>
-                {copied ? (
-                  <><Check className="mr-2 h-4 w-4" />Copied</>
-                ) : (
-                  <><Copy className="mr-2 h-4 w-4" />Copy</>
-                )}
-              </Button>
-              <Button variant="outline" size="sm" onClick={saveAsDraft}>
-                <Save className="mr-2 h-4 w-4" />Save as Draft
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Результат</CardTitle>
+          <CardDescription>Проверьте текст перед публикацией</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!result ? (
+            <p className="text-sm text-muted-foreground">
+              Здесь появятся хук, основная часть, хештеги и CTA после генерации.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-1 rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Hook</p>
+                <p className="text-sm font-medium">{result.hook}</p>
+              </div>
+
+              <div className="space-y-1 rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Body</p>
+                <p className="whitespace-pre-wrap text-sm">{result.body}</p>
+              </div>
+
+              <div className="space-y-1 rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Hashtags</p>
+                <p className="text-sm">{result.hashtags.join(" ") || "—"}</p>
+              </div>
+
+              <div className="space-y-1 rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">CTA</p>
+                <p className="text-sm">{result.cta || "—"}</p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={copyResult}>
+                  {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {copied ? "Скопировано" : "Копировать"}
+                </Button>
+                <Button variant="outline" onClick={saveAsDraft}>
+                  <Save className="mr-2 h-4 w-4" />
+                  Сохранить как черновик
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
-  )
+  );
 }

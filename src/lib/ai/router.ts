@@ -1,91 +1,127 @@
-import type { AIServiceConfig, AIResponse, TokenUsage } from './types'
-import { calculateCost } from './utils'
+export type BaseTask = "text" | "image_prompt" | "moderation";
 
+// Оставляем legacy-задачи для совместимости с существующими вызовами генерации.
 export type GenerationTask =
-  | 'social_post'
-  | 'blog_outline'
-  | 'ad_copy'
-  | 'image_prompt'
-  | 'feedback_optimizer'
-  | 'brand_voice'
+  | BaseTask
+  | "social_post"
+  | "blog_outline"
+  | "ad_copy"
+  | "feedback_optimizer"
+  | "brand_voice";
 
-export type SubscriptionTier = 'FREE' | 'PRO' | 'ENTERPRISE'
+export type SubscriptionTier = "FREE" | "PRO" | "TEAM" | "ENTERPRISE";
 
-export const MODEL_CONFIGS: Record<string, { input: number; output: number; maxTokens: number }> = {
-  'gpt-4o': { input: 0.005, output: 0.015, maxTokens: 4096 },
-  'gpt-4o-mini': { input: 0.00015, output: 0.0006, maxTokens: 128000 },
-  'gpt-4': { input: 0.03, output: 0.12, maxTokens: 8192 },
-  'claude-3-5-sonnet': { input: 0.003, output: 0.015, maxTokens: 200000 },
-  'gemini-1.5-pro': { input: 0.0035, output: 0.0105, maxTokens: 200000 },
+export type RouteDecision = {
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  fallbackModel?: string;
+  estimatedCost: number;
+};
+
+type TierConfig = Record<BaseTask, RouteDecision>;
+
+// Маппинг для @google/generative-ai: используем явные Gemini алиасы.
+const GEMINI_MODELS = {
+  flash: "gemini-flash",
+  pro: "gemini-pro",
+} as const;
+
+const FREE_CONFIG: TierConfig = {
+  // Для FREE выбираем экономичные модели с низкой стоимостью токена.
+  text: {
+    model: GEMINI_MODELS.flash,
+    fallbackModel: "gpt-4o-mini",
+    temperature: 0.6,
+    maxTokens: 900,
+    estimatedCost: 0.0012,
+  },
+  image_prompt: {
+    model: "gpt-4o-mini",
+    fallbackModel: GEMINI_MODELS.flash,
+    temperature: 0.7,
+    maxTokens: 700,
+    estimatedCost: 0.0015,
+  },
+  moderation: {
+    model: GEMINI_MODELS.flash,
+    temperature: 0.1,
+    maxTokens: 300,
+    estimatedCost: 0.0004,
+  },
+};
+
+const PRO_CONFIG: TierConfig = {
+  // Для PRO повышаем качество: основной выбор — более сильные модели.
+  text: {
+    model: GEMINI_MODELS.pro,
+    fallbackModel: "gpt-4o",
+    temperature: 0.55,
+    maxTokens: 2200,
+    estimatedCost: 0.008,
+  },
+  image_prompt: {
+    model: "gpt-4o",
+    fallbackModel: GEMINI_MODELS.pro,
+    temperature: 0.65,
+    maxTokens: 1800,
+    estimatedCost: 0.007,
+  },
+  moderation: {
+    model: GEMINI_MODELS.flash,
+    fallbackModel: GEMINI_MODELS.pro,
+    temperature: 0.1,
+    maxTokens: 500,
+    estimatedCost: 0.001,
+  },
+};
+
+const TEAM_CONFIG: TierConfig = {
+  // Для TEAM приоритет на качество и запас контекста, с premium fallback.
+  text: {
+    model: "gpt-4o",
+    fallbackModel: GEMINI_MODELS.pro,
+    temperature: 0.5,
+    maxTokens: 3200,
+    estimatedCost: 0.015,
+  },
+  image_prompt: {
+    model: GEMINI_MODELS.pro,
+    fallbackModel: "gpt-4o",
+    temperature: 0.6,
+    maxTokens: 2400,
+    estimatedCost: 0.012,
+  },
+  moderation: {
+    model: GEMINI_MODELS.pro,
+    fallbackModel: GEMINI_MODELS.flash,
+    temperature: 0.05,
+    maxTokens: 700,
+    estimatedCost: 0.002,
+  },
+};
+
+function normalizeTask(task: GenerationTask): BaseTask {
+  if (task === "image_prompt" || task === "moderation" || task === "text") {
+    return task;
+  }
+  return "text";
 }
 
-export const TASK_MODELS: Record<GenerationTask, { primary: string; fallback: string[]; temp: number }> = {
-  social_post: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.7 },
-  blog_outline: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.5 },
-  ad_copy: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'gemini-1.5-pro'], temp: 0.6 },
-  image_prompt: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.4 },
-  feedback_optimizer: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.3 },
-  brand_voice: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.5 },
-}
-
-export const TIER_LIMITS: Record<SubscriptionTier, { maxTokensPerRequest: number; maxCostPerRequest: number }> = {
-  FREE: { maxTokensPerRequest: 2000, maxCostPerRequest: 0.01 },
-  PRO: { maxTokensPerRequest: 8000, maxCostPerRequest: 0.05 },
-  ENTERPRISE: { maxTokensPerRequest: 32000, maxCostPerRequest: 0.20 },
-}
-
-export interface RouteDecision {
-  model: string
-  temperature: number
-  maxTokens: number
-  estimatedCost: number
-  tier: SubscriptionTier
-  warnings: string[]
+function normalizeTier(tier: SubscriptionTier): "FREE" | "PRO" | "TEAM" {
+  if (tier === "ENTERPRISE") return "TEAM";
+  return tier;
 }
 
 export function routeModel(task: GenerationTask, tier: SubscriptionTier): RouteDecision {
-  const taskConfig = TASK_MODELS[task]
-  const tierLimits = TIER_LIMITS[tier]
-  const warnings: string[] = []
+  const normalizedTask = normalizeTask(task);
+  const normalizedTier = normalizeTier(tier);
 
-  let selectedModel = taskConfig.primary
-  const modelInfo = MODEL_CONFIGS[selectedModel]
-
-  // Check tier limits
-  if (modelInfo.maxTokens > tierLimits.maxTokensPerRequest) {
-    warnings.push(`Model ${selectedModel} exceeds tier token limit, using fallback`)
-    const fallback = taskConfig.fallback.find(m => MODEL_CONFIGS[m].maxTokens <= tierLimits.maxTokensPerRequest)
-    if (fallback) {
-      selectedModel = fallback
-    }
+  if (normalizedTier === "FREE") {
+    return FREE_CONFIG[normalizedTask];
   }
-
-  // Estimate cost (assuming ~500 tokens prompt + 1000 tokens completion)
-  const estimatedPromptTokens = 500
-  const estimatedCompletionTokens = Math.min(1000, tierLimits.maxTokensPerRequest)
-  const estimatedCost = calculateCost(estimatedPromptTokens + estimatedCompletionTokens, selectedModel)
-
-  if (estimatedCost > tierLimits.maxCostPerRequest) {
-    warnings.push(`Estimated cost $${estimatedCost.toFixed(4)} exceeds tier limit, using cheaper model`)
-    const cheaperFallback = taskConfig.fallback
-      .concat([taskConfig.primary])
-      .find(m => {
-        const cost = calculateCost(estimatedPromptTokens + estimatedCompletionTokens, m)
-        return cost <= tierLimits.maxCostPerRequest
-      })
-    if (cheaperFallback) {
-      selectedModel = cheaperFallback
-    }
+  if (normalizedTier === "PRO") {
+    return PRO_CONFIG[normalizedTask];
   }
-
-  const finalModelInfo = MODEL_CONFIGS[selectedModel]
-
-  return {
-    model: selectedModel,
-    temperature: taskConfig.temp,
-    maxTokens: Math.min(1000, finalModelInfo.maxTokens, tierLimits.maxTokensPerRequest),
-    estimatedCost,
-    tier,
-    warnings,
-  }
+  return TEAM_CONFIG[normalizedTask];
 }

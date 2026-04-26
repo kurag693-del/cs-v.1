@@ -1,283 +1,288 @@
-'use server'
+"use server";
 
-import { prisma } from '@/lib/db'
-import { createClient } from '@/lib/auth/supabase'
-import { revalidatePath } from 'next/cache'
-import { z } from 'zod'
-import { Prisma } from '@prisma/client'
-import { routeModel, type GenerationTask, type RouteDecision } from '@/lib/ai/router'
-import { moderator } from '@/lib/ai/moderation'
-import { trackTokenUsage, calculateCost } from '@/lib/ai/utils'
-import type { GenerationResult } from '@/lib/ai/types'
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 
-const GenerateInputSchema = z.object({
-  type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
-  prompt: z.string().min(5, 'Prompt must be at least 5 characters').max(5000, 'Prompt must not exceed 5000 characters'),
-  platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']).optional(),
-  brandId: z.string().optional(),
-  profileId: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-})
+import { moderator } from "@/lib/ai/moderation";
+import { routeModel } from "@/lib/ai/router";
+import { prisma } from "@/lib/db/prisma";
+
+const TEXT_PROMPT_TEMPLATE = readFileSync(
+  path.join(process.cwd(), "prompts", "v1_text_generator.md"),
+  "utf-8"
+);
+
+const GenerateTextInputSchema = z.object({
+  topic: z.string().min(3, "Тема должна содержать минимум 3 символа").max(500, "Тема слишком длинная"),
+  platform: z.enum(["Instagram", "Telegram", "VK", "TikTok"]),
+  brandId: z.string().min(1).optional(),
+  maxLength: z.number().int().min(80).max(5000),
+});
+
+const GeneratedJsonSchema = z.object({
+  hook: z.string(),
+  body: z.string(),
+  hashtags: z.array(z.string()),
+  cta: z.string(),
+  platform_specific_notes: z.string(),
+  word_count: z.number(),
+  matches_brand_tone: z.boolean(),
+});
+
+type GenerateTextInput = z.infer<typeof GenerateTextInputSchema>;
+
+type GenerateTextSuccess = {
+  success: true;
+  data: {
+    generationId: string;
+    text: string;
+    modelUsed: string;
+    tokenCost: number;
+    latencyMs: number;
+  };
+};
+
+type GenerateTextFailure = {
+  success: false;
+  error: string;
+};
+
+type GenerateTextResult = GenerateTextSuccess | GenerateTextFailure;
+
+function buildPrompt(input: GenerateTextInput, brandVoice: Record<string, unknown> | null): string {
+  return [
+    TEXT_PROMPT_TEMPLATE,
+    "",
+    `{{topic}}: ${input.topic}`,
+    `{{platform}}: ${input.platform}`,
+    `{{brand_voice_json}}: ${JSON.stringify(brandVoice ?? {})}`,
+    `{{max_length_chars}}: ${input.maxLength}`,
+    "{{include_hashtags}}: true",
+    "{{cta_type}}: оставь комментарий",
+  ].join("\n");
+}
+
+function extractJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end < 0 || end <= start) return null;
+  return raw.slice(start, end + 1);
+}
+
+function estimateTokens(prompt: string, completion: string): number {
+  return Math.ceil((prompt.length + completion.length) / 4);
+}
+
+async function generateWithModel(
+  modelName: string,
+  prompt: string,
+  temperature: number,
+  maxTokens: number
+): Promise<string> {
+  const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GOOGLE_API_KEY (или GEMINI_API_KEY) не задан");
+  }
+
+  const client = new GoogleGenerativeAI(apiKey);
+  const model = client.getGenerativeModel({ model: modelName });
+  const response = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+      responseMimeType: "application/json",
+    },
+  });
+
+  return response.response.text();
+}
 
 export async function generateText(
-  formData: FormData,
+  input: { topic: string; platform: string; brandId?: string; maxLength: number },
   userId: string
-): Promise<GenerationResult> {
+): Promise<GenerateTextResult> {
   try {
-    // 1. Validate input
-    const validated = GenerateInputSchema.safeParse({
-      type: formData.get('type'),
-      prompt: formData.get('prompt'),
-      platform: formData.get('platform'),
-      brandId: formData.get('brandId'),
-      profileId: formData.get('profileId'),
-      metadata: formData.get('metadata'),
-    })
-
-    if (!validated.success) {
+    const parsedInput = GenerateTextInputSchema.safeParse(input);
+    if (!parsedInput.success) {
       return {
         success: false,
-        error: validated.error.issues[0]?.message ?? 'Validation error',
-        code: 'VALIDATION_ERROR',
-      }
+        error: parsedInput.error.issues[0]?.message ?? "Некорректные входные данные",
+      };
     }
 
-    const { type, prompt, platform, brandId, profileId, metadata } = validated.data
-
-    // 2. Fetch user and profile with credits
-    const supabase = createClient()
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-
-    if (userError || !user) {
-      return {
-        success: false,
-        error: 'Authentication required',
-        code: 'AUTH_ERROR',
-      }
+    if (!userId) {
+      return { success: false, error: "Пользователь не определен" };
     }
 
-    // Verify user matches session
-    if (user.id !== userId) {
-      return {
-        success: false,
-        error: 'User mismatch',
-        code: 'AUTH_ERROR',
-      }
-    }
-
-    // Get profile with credits (subscriptions table in Prisma)
-    const dbProfile = await prisma.profile.findUnique({
-      where: { userId },
+    const safeInput = parsedInput.data;
+    const userWithSubscription = await prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
       include: {
-        user: true,
+        subscriptions: true,
       },
-    })
+    });
 
-    const subscription = await prisma.subscription.findUnique({
-      where: { userId },
-    })
-
-    if (!subscription) {
-      // Create default free subscription
-      await prisma.subscription.create({
-        data: {
-          userId,
-          tier: 'FREE',
-          status: 'ACTIVE',
-          generationLimit: 100,
-          postLimit: 50,
-        },
-      })
+    if (!userWithSubscription) {
+      return { success: false, error: "Пользователь не найден" };
     }
 
-    const credits = subscription?.generationLimit || 100
-    const usedGenerations = await prisma.generation.count({
-      where: { userId, status: 'COMPLETED' },
-    })
+    const subscription = userWithSubscription.subscriptions[0] ?? null;
+    const tier = subscription?.tier ?? "FREE";
+    const creditsLeft = subscription?.generationLimit ?? 0;
+    if (creditsLeft <= 0) {
+      return { success: false, error: "Недостаточно кредитов для генерации" };
+    }
 
-    const remainingCredits = credits - usedGenerations
+    let brandVoice: Record<string, unknown> | null = null;
+    if (safeInput.brandId) {
+      const brand = await prisma.brand.findFirst({
+        where: {
+          id: safeInput.brandId,
+          userId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          voice: true,
+          tone: true,
+          description: true,
+        },
+      });
 
-    // 3. Check credits
-    if (remainingCredits <= 0) {
+      if (!brand) {
+        return { success: false, error: "Бренд не найден или недоступен" };
+      }
+
+      brandVoice = {
+        id: brand.id,
+        name: brand.name,
+        voice: brand.voice,
+        tone: brand.tone,
+        description: brand.description,
+      };
+    }
+
+    const prompt = buildPrompt(safeInput, brandVoice);
+    const route = routeModel("text", tier);
+
+    const startedAt = Date.now();
+    let rawResponse = "";
+    let modelUsed = route.model;
+    try {
+      rawResponse = await generateWithModel(
+        route.model,
+        prompt,
+        route.temperature,
+        route.maxTokens
+      );
+    } catch (primaryError) {
+      if (!route.fallbackModel) throw primaryError;
+      rawResponse = await generateWithModel(
+        route.fallbackModel,
+        prompt,
+        route.temperature,
+        route.maxTokens
+      );
+      modelUsed = route.fallbackModel;
+    }
+    const latencyMs = Date.now() - startedAt;
+
+    const jsonPayload = extractJsonObject(rawResponse);
+    if (!jsonPayload) {
+      return { success: false, error: "Модель вернула невалидный JSON" };
+    }
+
+    const parsedGeneration = GeneratedJsonSchema.safeParse(
+      JSON.parse(jsonPayload) as unknown
+    );
+    if (!parsedGeneration.success) {
       return {
         success: false,
-        error: 'Insufficient credits. Please upgrade your plan.',
-        code: 'INSUFFICIENT_CREDITS',
-      }
+        error: parsedGeneration.error.issues[0]?.message ?? "Ответ модели не прошел валидацию",
+      };
     }
 
-    // 4. Moderation check
-    const moderationResult = await moderator.moderateContent(prompt)
+    const generated = parsedGeneration.data;
+    const text = `${generated.hook}\n\n${generated.body}\n\n${generated.hashtags.join(" ")}\n\n${generated.cta}`;
 
-    if (!moderationResult.isApproved) {
-      // Record the blocked generation
+    const moderation = await moderator.moderateContent(text, { tier, brandRules: brandVoice });
+    if (!moderation.isApproved) {
       await prisma.generation.create({
         data: {
           userId,
-          profileId: profileId,
-          type,
+          brandId: safeInput.brandId ?? null,
+          type: "text_generation",
           prompt,
-          status: 'FAILED',
-          error: `Blocked by moderation: ${moderationResult.reason}`,
-          metadata: ({
-            moderation: moderationResult,
-            ...metadata,
-          } as unknown as Prisma.InputJsonValue),
-          model: 'moderation_block',
+          output: text,
+          status: "FAILED",
+          error: moderation.reason,
+          model: modelUsed,
           tokens: 0,
+          metadata: {
+            moderation,
+          } as Prisma.InputJsonValue,
         },
-      })
+      });
 
-      return {
-        success: false,
-        error: `Content blocked: ${moderationResult.reason}`,
-        code: 'CONTENT_BLOCKED',
+      return { success: false, error: "Контент не прошел модерацию" };
+    }
+
+    const estimatedTokens = estimateTokens(prompt, text);
+    const tokenCost = route.estimatedCost;
+
+    const generation = await prisma.$transaction(async (tx) => {
+      if (!subscription) {
+        throw new Error("Подписка пользователя не найдена");
       }
-    }
 
-    // 5. Route model selection
-    const route: RouteDecision = routeModel(type, subscription?.tier || 'FREE')
+      const created = await tx.generation.create({
+        data: {
+          userId,
+          brandId: safeInput.brandId ?? null,
+          type: "text_generation",
+          prompt,
+          output: text,
+          status: "COMPLETED",
+          model: modelUsed,
+          tokens: estimatedTokens,
+          metadata: {
+            tokenCost,
+            latencyMs,
+            modelUsed,
+            moderation,
+            platform: safeInput.platform,
+          } as Prisma.InputJsonValue,
+        },
+      });
 
-    // 6. Fetch brand if brandId provided
-    let brand = null
-    if (brandId) {
-      brand = await prisma.brand.findUnique({
-        where: { id: brandId, userId, deletedAt: null },
-      })
-    }
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: { generationLimit: { decrement: 1 } },
+      });
 
-    // 7. Build enhanced prompt using prompt library
-    const enhancedPrompt = buildPrompt(
-      type,
-      prompt,
-      route.model,
-      brand,
-      platform,
-      dbProfile || undefined
-    )
-
-    // 8. Estimate costs
-    const estimatedTokens = 1500 // average response
-    const estimatedCost = calculateCost(estimatedTokens, route.model)
-
-    // 9. Create generation record (pending)
-    const generation = await prisma.generation.create({
-      data: {
-        userId,
-        profileId: profileId || dbProfile?.id || null,
-        brandId: brandId || null,
-        type,
-        prompt: enhancedPrompt,
-        status: 'PROCESSING',
-        model: route.model,
-        tokens: 0,
-        metadata: ({
-          moderation: moderationResult,
-          route,
-          platform,
-          estimatedCost,
-          ...metadata,
-        } as unknown as Prisma.InputJsonValue),
-      },
-    })
-
-    // 10. Simulate LLM call (in production: call LiteLLM/OpenRouter)
-    // For now, simulate based on type
-    const generatedContent = simulateGeneration(type, enhancedPrompt, route)
-
-    // 11. Update generation with result
-    await prisma.generation.update({
-      where: { id: generation.id },
-      data: {
-        status: 'COMPLETED' as const,
-        output: generatedContent,
-        tokens: estimatedTokens,
-        metadata: ({
-          ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
-          completedAt: new Date(),
-          actualCost: estimatedCost,
-        } as unknown as Prisma.InputJsonValue),
-      },
-    })
-
-    // 12. Track token usage
-    trackTokenUsage(
-      { promptTokens: 500, completionTokens: 1000, totalTokens: estimatedTokens },
-      estimatedCost
-    )
-
-    // 13. Re-sync subscription credits (count COMPLETED generations)
-    revalidatePath('/dashboard/generate')
+      return created;
+    });
 
     return {
       success: true,
       data: {
         generationId: generation.id,
-        content: generatedContent,
-        model: route.model,
-        tokens: {
-          promptTokens: 500,
-          completionTokens: 1000,
-          totalTokens: estimatedTokens,
-          estimatedCostUSD: estimatedCost,
-        },
-        costUSD: estimatedCost,
+        text,
+        modelUsed,
+        tokenCost,
+        latencyMs,
       },
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Generation failed'
-    console.error('Generation error:', err)
+    };
+  } catch (error: unknown) {
+    console.error("generateText error:", error);
     return {
       success: false,
-      error: message,
-      code: 'INTERNAL_ERROR',
-    }
+      error: error instanceof Error ? error.message : "Ошибка генерации текста",
+    };
   }
-}
-
-// Build enhanced prompt using prompt library
-function buildPrompt(
-  type: GenerationTask,
-  prompt: string,
-  model: string,
-  brand: { name?: string; voice?: string | null; tone?: string | null; forbiddenWords?: string[] } | null,
-  platform: string | undefined,
-  profile: { brandVoice?: string | null } | undefined
-): string {
-  let systemContext = ''
-
-  if (brand) {
-    systemContext += `Brand: ${brand.name}\n`
-    systemContext += `Voice: ${brand.voice || 'Professional'}\n`
-    systemContext += `Tone: ${brand.tone || 'Friendly'}\n`
-    const forbiddenWords = brand.forbiddenWords ?? []
-    if (forbiddenWords.length > 0) {
-      systemContext += `Avoid: ${forbiddenWords.join(', ')}\n`
-    }
-  }
-
-  if (profile?.brandVoice) {
-    systemContext += `Brand Voice: ${profile.brandVoice}\n`
-  }
-
-  if (platform) {
-    systemContext += `Platform: ${platform}\nOptimize for ${platform} formatting and character limits.\n`
-  }
-
-  return `${systemContext}\nTask: ${type}\nPrompt: ${prompt}`
-}
-
-// Simulate generation (in production: call actual LLM via LiteLLM/OpenRouter)
-function simulateGeneration(type: GenerationTask, prompt: string, route: RouteDecision): string {
-  const templates: Record<GenerationTask, string> = {
-    social_post: `🚀 ${prompt.substring(0, 50)}...\n\n✨ Key points:\n• Generated by ${route.model}\n• Optimized for engagement\n• Ready to post\n\n#ContentCreation #AI`,
-    blog_outline: `# ${prompt}\n\n## Introduction\n- Hook and context\n\n## Main Points\n1. First major point\n2. Second major point\n3. Third major point\n\n## Conclusion\n- Summary and call to action\n\n*Generated by ${route.model}*`,
-    ad_copy: `🔥 ${prompt}\n\n✨ Why choose us:\n• Quality guaranteed\n• Fast delivery\n• 24/7 support\n\n👉 Click to learn more!`,
-    image_prompt: `A detailed visual representation of "${prompt}", professional quality, highly detailed, 8k resolution, photorealistic --ar 16:9`,
-    feedback_optimizer: `✅ Original: ${prompt}\n\n📝 Optimized version:\n${prompt}\n\n💡 Suggestions:\n• Break into shorter sentences\n• Add bullet points for readability\n• Include a clear call-to-action`,
-    brand_voice: `Brand Voice Profile for "${prompt}":\n\nTone: Professional yet approachable\nStyle: Clear, concise, engaging\nAudience: Tech-savvy professionals\nKey phrases: "Innovative", "Reliable", "Forward-thinking"\n\nExample posts:\n- "Excited to announce our latest feature! 🚀"
-- "Here's how we're solving [problem]"`,
-  }
-
-  return templates[type] || `Generated content for: ${prompt}`
 }
