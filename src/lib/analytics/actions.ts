@@ -1,7 +1,122 @@
-'use server'
+"use server";
 
-import { prisma } from '@/lib/db'
+import { Prisma } from "@prisma/client";
 
+import { prisma } from "@/lib/db/prisma";
+
+export interface DashboardBestPlatform {
+  platform: string;
+  count: number;
+}
+
+export interface DashboardStats {
+  postsLast7Days: number;
+  creditsSpent: number;
+  bestPlatforms: DashboardBestPlatform[];
+}
+
+export type DashboardStatsResult =
+  | {
+      success: true;
+      data: DashboardStats;
+    }
+  | {
+      success: false;
+      error: {
+        code: string;
+        message: string;
+      };
+    };
+
+export async function getDashboardStats(userId: string): Promise<DashboardStatsResult> {
+  if (!userId) {
+    return {
+      success: false,
+      error: {
+        code: "INVALID_USER_ID",
+        message: "Пользователь не определен",
+      },
+    };
+  }
+
+  const sinceDate = new Date();
+  sinceDate.setDate(sinceDate.getDate() - 7);
+
+  try {
+    const [postsLast7Days, generationsAggregate, groupedPlatforms] = await Promise.all([
+      prisma.post.count({
+        where: {
+          userId,
+          deletedAt: null,
+          createdAt: {
+            gte: sinceDate,
+          },
+        },
+      }),
+      prisma.generation.aggregate({
+        where: {
+          userId,
+          deletedAt: null,
+          createdAt: {
+            gte: sinceDate,
+          },
+        },
+        _sum: {
+          tokens: true,
+        },
+      }),
+      prisma.post.groupBy({
+        by: ["platform"],
+        where: {
+          userId,
+          deletedAt: null,
+          createdAt: {
+            gte: sinceDate,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+        orderBy: {
+          _count: {
+            platform: "desc",
+          },
+        },
+        take: 3,
+      }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        postsLast7Days,
+        creditsSpent: generationsAggregate._sum.tokens ?? 0,
+        bestPlatforms: groupedPlatforms.map((item) => ({
+          platform: item.platform,
+          count: item._count._all,
+        })),
+      },
+    };
+  } catch (error: unknown) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return {
+        success: false,
+        error: {
+          code: error.code,
+          message: "База данных временно недоступна. Попробуйте снова.",
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: {
+        code: "DB_UNAVAILABLE",
+        message: "База данных временно недоступна. Попробуйте снова.",
+      },
+    };
+  }
+}
 export async function getAnalyticsSummary(userId: string) {
   const posts = await prisma.post.findMany({
     where: {

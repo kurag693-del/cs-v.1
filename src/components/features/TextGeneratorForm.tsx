@@ -46,6 +46,13 @@ type ParsedResult = {
   rawText: string;
 };
 
+type GenerateRequestPayload = {
+  topic: string;
+  platform: GenerateTextInput["platform"];
+  brandId?: string;
+  maxLength: number;
+};
+
 function parseGeneratedText(text: string): ParsedResult {
   const parts = text.split("\n\n");
   const hook = parts[0] ?? "";
@@ -75,6 +82,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [manualCta, setManualCta] = useState("");
   const [contentFormat, setContentFormat] = useState<"Post" | "Reel" | "Carousel" | "Story">("Post");
   const [generationPhase, setGenerationPhase] = useState<0 | 1 | 2>(0);
+  const [lastRequest, setLastRequest] = useState<GenerateRequestPayload | null>(null);
 
   useEffect(() => {
     if (!isGenerating) {
@@ -101,11 +109,46 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     },
   });
 
-  const onSubmit = async (values: GenerateTextInput) => {
+  const runGeneration = async (payload: GenerateRequestPayload) => {
     setIsGenerating(true);
     setError(null);
     setResult(null);
+    setLastRequest(payload);
 
+    try {
+      const response = await generateText(payload, userId);
+
+      if (!response.success) {
+        const message = response.error || "Не удалось сгенерировать текст";
+        setError(message);
+        toast({
+          title: "Ошибка",
+          description: message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setResult(parseGeneratedText(response.data.text));
+      toast({
+        title: "Готово",
+        description: `Текст сгенерирован (${response.data.modelUsed})`,
+      });
+    } catch {
+      const message = "Проверьте подключение и попробуйте снова";
+      setError(message);
+      setIsGenerating(false);
+      toast({
+        title: "Ошибка",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const onSubmit = async (values: GenerateTextInput) => {
     const enrichedTopic = [
       `Тема: ${values.topic}`,
       audience ? `Аудитория: ${audience}` : "",
@@ -117,34 +160,17 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       .filter(Boolean)
       .join("\n");
 
-    const response = await generateText(
-      {
-        topic: enrichedTopic,
-        platform: values.platform,
-        brandId: values.brandId || undefined,
-        maxLength: values.maxLength,
-      },
-      userId
-    );
-
-    if (!response.success) {
-      const message = response.error || "Не удалось сгенерировать текст";
-      setError(message);
-      setIsGenerating(false);
-      toast({
-        title: "Ошибка",
-        description: message,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setResult(parseGeneratedText(response.data.text));
-    setIsGenerating(false);
-    toast({
-      title: "Готово",
-      description: `Текст сгенерирован (${response.data.modelUsed})`,
+    await runGeneration({
+      topic: enrichedTopic,
+      platform: values.platform,
+      brandId: values.brandId || undefined,
+      maxLength: values.maxLength,
     });
+  };
+
+  const handleRetry = async () => {
+    if (!lastRequest || isGenerating) return;
+    await runGeneration(lastRequest);
   };
 
   const handleCopy = async () => {
@@ -241,7 +267,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
+                          <SelectContent className="border border-border bg-popover shadow-md">
                             <SelectItem value="Instagram">Instagram</SelectItem>
                             <SelectItem value="Telegram">Telegram</SelectItem>
                             <SelectItem value="VK">VK</SelectItem>
@@ -271,7 +297,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                               <SelectValue placeholder="Без бренда" />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
+                          <SelectContent className="border border-border bg-popover shadow-md">
                             <SelectItem value="none">Без бренда</SelectItem>
                             {brands.map((brand) => (
                               <SelectItem key={brand.id} value={brand.id}>
@@ -328,7 +354,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                       <SelectTrigger className="max-w-full">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="border border-border bg-popover shadow-md">
                         <SelectItem value="Post">Post</SelectItem>
                         <SelectItem value="Reel">Reel</SelectItem>
                         <SelectItem value="Carousel">Carousel</SelectItem>
@@ -364,6 +390,11 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 <Alert variant="destructive">
                   <AlertTitle>Ошибка генерации</AlertTitle>
                   <AlertDescription>{error}</AlertDescription>
+                  <div className="mt-3">
+                    <Button type="button" variant="outline" size="sm" onClick={handleRetry} disabled={isGenerating || !lastRequest}>
+                      Повторить
+                    </Button>
+                  </div>
                 </Alert>
               ) : null}
 
@@ -373,6 +404,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
               </Button>
               {isGenerating ? (
                 <div className="rounded-xl border border-border bg-secondary px-3.5 py-3 text-[0.8125rem] text-muted-foreground motion-silent">
+                  <p className="mb-2 font-medium text-foreground">ИИ думает... (~15 сек)</p>
                   {generationPhase === 0 ? "Анализируем контекст бренда и платформы..." : null}
                   {generationPhase === 1 ? "Собираем hook, структуру и CTA..." : null}
                   {generationPhase === 2 ? "Финализируем премиальный тон и подачу..." : null}

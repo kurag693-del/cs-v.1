@@ -53,16 +53,21 @@ type GenerateTextFailure = {
 type GenerateTextResult = GenerateTextSuccess | GenerateTextFailure;
 
 function buildPrompt(input: GenerateTextInput, brandVoice: Record<string, unknown> | null): string {
-  return [
-    TEXT_PROMPT_TEMPLATE,
-    "",
-    `{{topic}}: ${input.topic}`,
-    `{{platform}}: ${input.platform}`,
-    `{{brand_voice_json}}: ${JSON.stringify(brandVoice ?? {})}`,
-    `{{max_length_chars}}: ${input.maxLength}`,
-    "{{include_hashtags}}: true",
-    "{{cta_type}}: оставь комментарий",
-  ].join("\n");
+  const variables: Record<string, string> = {
+    topic: input.topic,
+    platform: input.platform,
+    brand_voice_json: JSON.stringify(brandVoice ?? {}),
+    max_length_chars: String(input.maxLength),
+    include_hashtags: "true",
+    cta_type: "оставь комментарий",
+  };
+
+  let prompt = TEXT_PROMPT_TEMPLATE;
+  for (const [key, value] of Object.entries(variables)) {
+    prompt = prompt.replaceAll(`{{${key}}}`, value);
+  }
+
+  return prompt;
 }
 
 function extractJsonObject(raw: string): string | null {
@@ -130,7 +135,19 @@ export async function generateText(
       return { success: false, error: "Пользователь не найден" };
     }
 
-    const subscription = userWithSubscription.subscriptions[0] ?? null;
+    let subscription = userWithSubscription.subscriptions[0] ?? null;
+    if (!subscription) {
+      subscription = await prisma.subscription.create({
+        data: {
+          userId,
+          tier: "FREE",
+          status: "ACTIVE",
+          generationLimit: 100,
+          postLimit: 50,
+        },
+      });
+    }
+
     const tier = subscription?.tier ?? "FREE";
     const creditsLeft = subscription?.generationLimit ?? 0;
     if (creditsLeft <= 0) {

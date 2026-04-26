@@ -1,83 +1,71 @@
-'use client'
-
-import { useSession } from '@/lib/auth/hooks'
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { cookies } from "next/headers"
+import Link from "next/link"
+import { redirect } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
-  ArrowRight,
-  AtSign,
-  Briefcase,
-  CalendarDays,
-  CheckCircle2,
-  Clock3,
-  Play,
-  Sparkles,
-  TrendingUp,
-  Wand2,
+  ArrowRight, AtSign, Briefcase, CalendarDays, CheckCircle2, Clock3, Play, Sparkles, TrendingUp, Wand2,
 } from 'lucide-react'
 import { ContextualAiSuggestion } from '@/components/ui/contextual-ai-suggestion'
+import { getDashboardStats } from "@/lib/analytics/actions"
+import { prisma } from "@/lib/db/prisma"
 
-export default function DashboardPage() {
-  const { user, session, loading } = useSession()
-  const router = useRouter()
-  const [logs, setLogs] = useState<string[]>([])
+type UpcomingPostItem = {
+  title: string
+  time: string
+  channel: string
+}
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login')
-    }
-  }, [loading, user, router])
+async function getUserIdFromAuthCookie(): Promise<string | null> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("sb-access-token")?.value
+  if (!token) return null
 
-  const testMiddleware = async () => {
-    try {
-      const res = await fetch('/api/test-auth', { credentials: 'include' })
-      const raw = await res.text()
-      const parsed = raw ? JSON.parse(raw) : { success: false, error: 'Empty response body' }
-      setLogs((prev) => [...prev, `[${new Date().toISOString()}] ${JSON.stringify(parsed)}`])
-    } catch (error) {
-      setLogs((prev) => [
-        ...prev,
-        `[${new Date().toISOString()}] ${JSON.stringify({
-          success: false,
-          error: error instanceof Error ? error.message : 'Invalid response format',
-        })}`,
-      ])
-    }
-  }
+  const parts = token.split(".")
+  if (parts.length < 2) return null
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-32 w-full rounded-2xl" />
-        <div className="grid gap-4 md:grid-cols-2">
-          <Skeleton className="h-52 w-full rounded-2xl" />
-          <Skeleton className="h-52 w-full rounded-2xl" />
-        </div>
-      </div>
-    )
-  }
-
-  if (!user) {
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { sub?: string }
+    return payload.sub ?? null
+  } catch {
     return null
   }
+}
 
-  const upcomingPosts = [
-    { title: 'Пост: 5 AI-ошибок в контенте', time: 'Сегодня, 18:30', channel: 'Instagram' },
-    { title: 'Карусель: Кейсы клиентов Q2', time: 'Завтра, 10:00', channel: 'LinkedIn' },
-    { title: 'Short: контент-план на май', time: 'Вт, 12:00', channel: 'YouTube' },
-  ] as const
+export default async function DashboardPage() {
+  const userId = await getUserIdFromAuthCookie()
+  if (!userId) {
+    redirect("/login")
+  }
 
-  const aiSuggestions = [
+  const user = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+    select: { id: true, email: true },
+  })
+
+  if (!user) {
+    redirect("/login")
+  }
+
+  const statsResult = await getDashboardStats(user.id)
+
+  const upcomingPosts: UpcomingPostItem[] = statsResult.success
+    ? statsResult.data.bestPlatforms.map((platformStat) => ({
+        title: `Контент для ${platformStat.platform.toLowerCase()}: ${platformStat.count} постов за 7 дней`,
+        time: "На этой неделе",
+        channel: platformStat.platform,
+      }))
+    : []
+
+  // TODO: подключить AI-рекомендации
+  const aiSuggestions: string[] = [
     'Сделать репост лучшего поста недели в формате короткого видео.',
     'Подготовить экспертный тред по теме, где растет вовлеченность.',
     'Обновить tone-of-voice для продуктовых публикаций на следующую неделю.',
-  ] as const
+  ]
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -157,18 +145,22 @@ export default function DashboardPage() {
             <CardDescription>Только критичные слоты на ближайшие 72 часа.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2.5">
-            {upcomingPosts.map((post) => (
-              <div key={post.title} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5">
-                <div>
-                  <p className="text-[0.9375rem] font-medium">{post.title}</p>
-                  <p className="mt-1 text-[0.8125rem] text-muted-foreground">{post.channel}</p>
+            {upcomingPosts.length > 0 ? (
+              upcomingPosts.map((post) => (
+                <div key={post.title} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5">
+                  <div>
+                    <p className="text-[0.9375rem] font-medium">{post.title}</p>
+                    <p className="mt-1 text-[0.8125rem] text-muted-foreground">{post.channel}</p>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1 text-[0.8125rem] text-muted-foreground">
+                    <Clock3 className="h-3.5 w-3.5" />
+                    {post.time}
+                  </div>
                 </div>
-                <div className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1 text-[0.8125rem] text-muted-foreground">
-                  <Clock3 className="h-3.5 w-3.5" />
-                  {post.time}
-                </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <p className="text-[0.875rem] text-muted-foreground">Пока нет данных о публикациях за последние 7 дней.</p>
+            )}
           </CardContent>
         </Card>
 
@@ -205,6 +197,18 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </section>
+
+      {!statsResult.success ? (
+        <Alert variant="destructive">
+          <AlertTitle>Ошибка загрузки аналитики</AlertTitle>
+          <AlertDescription>{statsResult.error.message}</AlertDescription>
+          <div className="mt-3">
+            <Button asChild size="sm" variant="outline">
+              <Link href="/dashboard">Повторить</Link>
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-2">
         <Card>
@@ -277,13 +281,17 @@ export default function DashboardPage() {
             </div>
             <div className="rounded-xl border border-border bg-card p-3.5">
               <p className="text-[0.8125rem] text-muted-foreground">Published</p>
-              <p className="mt-1 text-xl font-semibold tracking-[-0.02em]">12</p>
+              <p className="mt-1 text-xl font-semibold tracking-[-0.02em]">
+                {statsResult.success ? statsResult.data.postsLast7Days : 0}
+              </p>
               <p className="mt-1 text-[0.8125rem] text-muted-foreground">за 7 дней</p>
             </div>
             <div className="rounded-xl border border-border bg-card p-3.5">
-              <p className="text-[0.8125rem] text-muted-foreground">Best slot</p>
-              <p className="mt-1 text-xl font-semibold tracking-[-0.02em]">18:30</p>
-              <p className="mt-1 text-[0.8125rem] text-muted-foreground">Instagram / Mon-Thu</p>
+              <p className="text-[0.8125rem] text-muted-foreground">Credits spent</p>
+              <p className="mt-1 text-xl font-semibold tracking-[-0.02em]">
+                {statsResult.success ? statsResult.data.creditsSpent : 0}
+              </p>
+              <p className="mt-1 text-[0.8125rem] text-muted-foreground">токенов за 7 дней</p>
             </div>
           </CardContent>
         </Card>
@@ -299,21 +307,16 @@ export default function DashboardPage() {
               <p className="mt-1 text-[0.9375rem] font-medium">{user.email}</p>
             </div>
             <div className="rounded-xl border border-border bg-card p-3">
-              <p className="text-[0.8125rem] text-muted-foreground">Session expires</p>
+              <p className="text-[0.8125rem] text-muted-foreground">Top platform</p>
               <p className="mt-1 text-[0.9375rem] font-medium">
-                {session?.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : 'N/A'}
+                {statsResult.success && statsResult.data.bestPlatforms[0]
+                  ? statsResult.data.bestPlatforms[0].platform
+                  : "N/A"}
               </p>
             </div>
-            <Button variant="outline" onClick={testMiddleware} className="w-full">
-              Test Auth Headers
+            <Button variant="outline" asChild className="w-full">
+              <Link href="/dashboard">Обновить данные</Link>
             </Button>
-            {logs.length > 0 && (
-              <pre className="max-h-36 overflow-auto rounded-xl border border-border bg-secondary p-3 text-[0.75rem] text-muted-foreground">
-                {logs.map((log, i) => (
-                  <div key={i}>{log}</div>
-                ))}
-              </pre>
-            )}
           </CardContent>
         </Card>
       </section>
