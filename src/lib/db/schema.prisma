@@ -1,0 +1,119 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  password      String?
+  role          UserRole  @default(USER)
+  
+  profiles     Profile?
+  content      Content[]
+  schedules    Schedule[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  bio         String?
+  avatar      String?
+  brandVoice  String?
+  tone        String?
+  targetAudience String?
+  preferences Json?
+  
+  content     Content[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Content {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  
+  title       String
+  body        String
+  platform    Platform
+  status      ContentStatus @default(DRAFT)
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  tags        String[]
+  metadata    Json?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+}
+
+model Schedule {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  contentId   String
+  scheduledAt DateTime
+  timezone    String   @default("UTC")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([scheduledAt])
+}
+
+model Analytics {
+  id          String   @id @default(cuid())
+  userId      String
+  
+  contentType   String?
+  impressions   Int      @default(0)
+  engagements   Int      @default(0)
+  clicks        Int      @default(0)
+  shares        Int      @default(0)
+  date          DateTime @default(now())
+  
+  @@index([userId])
+  @@index([date])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum Platform {
+  TWITTER
+  LINKEDIN
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+}
+
+enum ContentStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}

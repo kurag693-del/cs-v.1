@@ -1,0 +1,256 @@
+// This is your Prisma schema file (Prisma 6)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum Platform {
+  TWITTER
+  LINKEDIN
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+  YOUTUBE
+}
+
+enum ContentStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum GenerationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum SubscriptionTier {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  EXPIRED
+  TRIALING
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  bio         String?
+  avatar      String?
+  brandVoice  String?
+  tone        String?
+  targetAudience String?
+  preferences Json?
+  
+  brands      Brand[]
+  generations Generation[]
+  posts       Post[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  @@index([userId])
+  @@index([deletedAt])
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  password      String?
+  role          UserRole  @default(USER)
+  
+  profiles     Profile[]
+  brands       Brand[]
+  generations  Generation[]
+  posts        Post[]
+  subscriptions Subscription[]
+  credentials  PlatformCredential[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  @@index([email])
+  @@index([deletedAt])
+}
+
+model Brand {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  
+  name        String
+  description String?
+  logo        String?
+  website     String?
+  industry    String?
+  voice       String?
+  tone        String?
+  colors      String[]
+  
+  generations Generation[]
+  posts       Post[]
+  credentials PlatformCredential[]
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime? // Soft delete
+  
+  @@index([userId])
+  @@index([profileId])
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Generation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId   String?
+  profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  brandId     String?
+  brand       Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  
+  type        String
+  prompt      String
+  output      String?
+  tokens      Int      @default(0)
+  model       String
+  status      GenerationStatus @default(PENDING)
+  error       String?
+  metadata    Json?
+  
+  posts       Post[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime? // Soft delete
+  
+  @@index([userId])
+  @@index([profileId])
+  @@index([brandId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([deletedAt])
+}
+
+model Post {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileId    String?
+  profile      Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  brandId      String?
+  brand        Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  generationId String?
+  generation   Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  
+  platform     Platform
+  content      String
+  mediaUrls    String[]
+  scheduledAt  DateTime?
+  publishedAt  DateTime?
+  status       ContentStatus @default(DRAFT)
+  metadata     Json?
+  
+  credentialId String?
+  credential   PlatformCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime? // Soft delete
+  
+  @@index([userId])
+  @@index([profileId])
+  @@index([brandId])
+  @@index([generationId])
+  @@index([platform])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([deletedAt])
+}
+
+model PlatformCredential {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  brandId       String
+  brand         Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  platform      Platform
+  accessToken   String
+  refreshToken  String?
+  expiresAt     DateTime?
+  scopes        String[]
+  
+  posts         Post[]
+  
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime? // Soft delete
+  
+  @@index([userId])
+  @@index([brandId])
+  @@index([platform])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@unique([userId, platform, brandId])
+}
+
+model Subscription {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  tier                SubscriptionTier @default(FREE)
+  status              SubscriptionStatus @default(ACTIVE)
+  
+  stripeCustomerId    String?
+  stripeSubscriptionId String?
+  stripePriceId       String?
+  
+  trialStartsAt       DateTime?
+  trialEndsAt         DateTime?
+  startsAt            DateTime?
+  endsAt              DateTime?
+  canceledAt          DateTime?
+  
+  generationLimit     Int  @default(100)
+  postLimit           Int  @default(50)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@index([status])
+}

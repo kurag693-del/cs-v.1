@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type Check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+
+      - name: Start app
+        run: |
+          npm run start -- --hostname 127.0.0.1 --port 3000 &
+          for i in {1..30}; do
+            if curl -sSf http://127.0.0.1:3000 >/dev/null; then
+              echo "App is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not start in time"
+          exit 1
+
+      - name: Smoke
+        run: npm run smoke
