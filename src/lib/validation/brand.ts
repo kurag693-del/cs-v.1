@@ -9,7 +9,7 @@ const maxExamplesLength = 2000;
 export const CreateBrandSchema = z.object({
   name: z
     .string()
-    .min(2, "Название бренда должно быть не короче 2 символов")
+    .min(2, "Минимум 2 символа")
     .max(maxNameLength, `Название бренда не должно превышать ${maxNameLength} символов`),
   tone: z
     .string()

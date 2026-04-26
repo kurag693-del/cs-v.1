@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "ci": "npm run lint && npm run type-check && npm run build"
+    "ci": "npm run lint && npm run type-check && npm run build",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -23,14 +24,18 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.5.0",
+    "dotenv": "^17.4.2",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.4",
+    "ioredis-mock": "^8.13.1",
     "next": "^16.2.4",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.4",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

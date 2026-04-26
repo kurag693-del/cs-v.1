@@ -51,7 +51,7 @@ function mapLocalUserToSupabaseUser(user: { id: string; email: string }): User {
     email: user.email,
     email_confirmed_at: new Date().toISOString(),
     phone: "",
-    confirmation_sent_at: null,
+    confirmation_sent_at: undefined,
     confirmed_at: new Date().toISOString(),
     last_sign_in_at: new Date().toISOString(),
     app_metadata: {},

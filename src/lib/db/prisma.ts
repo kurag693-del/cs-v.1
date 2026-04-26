@@ -1,13 +1,12 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from '@prisma/client';
 
-declare global {
-  var prismaGlobal: PrismaClient | undefined;
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.prisma = prisma;
 }
-
-// В Next.js при hot-reload модули могут переинициализироваться, и singleton через globalThis предотвращает создание лишних подключений к БД.
-export const prisma: PrismaClient =
-  globalThis.prismaGlobal ?? new PrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.prismaGlobal = prisma;
-}
+// Используем DATABASE_URL из .env.local (порт 5433 для локальной разработки)

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import * as SliderPrimitive from "@radix-ui/react-slider";
 import { Check, Copy, Loader2, RefreshCcw, Save } from "lucide-react";
 
 import { generateText } from "@/lib/generate/actions";
@@ -15,9 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { cn } from "@/lib/utils";
 
 type Platform = "Instagram" | "Telegram" | "VK" | "TikTok";
 
@@ -33,23 +32,6 @@ type ParsedResult = {
   cta: string;
   rawText: string;
 };
-
-function Slider({
-  className,
-  ...props
-}: React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>) {
-  return (
-    <SliderPrimitive.Root
-      className={cn("relative flex w-full touch-none select-none items-center", className)}
-      {...props}
-    >
-      <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-muted">
-        <SliderPrimitive.Range className="absolute h-full bg-primary" />
-      </SliderPrimitive.Track>
-      <SliderPrimitive.Thumb className="block h-5 w-5 rounded-full border-2 border-primary bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-    </SliderPrimitive.Root>
-  );
-}
 
 function parseGeneratedText(text: string): ParsedResult {
   const chunks = text.split("\n\n");

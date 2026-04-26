@@ -10,6 +10,18 @@ import { useToast } from '@/components/ui/use-toast'
 import { addDays, startOfWeek } from 'date-fns'
 import { getCalendarPosts, getDrafts } from '@/lib/posts/actions'
 import { CreatePostForm } from '@/components/features/CreatePostForm'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { CalendarClock, CalendarDays, CalendarRange, CircleDot, Clock3, GripVertical, ListFilter, Rocket, Send } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+type ViewMode = 'week' | 'month' | 'list'
+
+const viewModes: Array<{ id: ViewMode; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: 'week', label: 'Week', icon: CalendarRange },
+  { id: 'month', label: 'Month', icon: CalendarDays },
+  { id: 'list', label: 'List', icon: ListFilter },
+]
 
 export default function CalendarPage() {
   const { user, session, loading } = useSession()
@@ -20,6 +32,7 @@ export default function CalendarPage() {
   const [loadingData, setLoadingData] = useState(true)
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false)
   const [publishJobsProcessed, setPublishJobsProcessed] = useState<number | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('week')
 
   useEffect(() => {
     if (!loading && !user) {
@@ -85,18 +98,57 @@ export default function CalendarPage() {
     return null
   }
 
+  const scheduledCount = posts.filter((post) => post.status === 'SCHEDULED').length
+  const publishedCount = posts.filter((post) => post.status === 'PUBLISHED').length
+  const queuedCount = posts.filter((post) => post.status === 'SCHEDULED' || post.status === 'DRAFT').length
+
+  const statusClassMap: Record<string, string> = {
+    DRAFT: 'bg-secondary text-secondary-foreground',
+    SCHEDULED: 'bg-accent text-accent-foreground',
+    PUBLISHED: 'bg-primary text-primary-foreground',
+    FAILED: 'bg-destructive text-destructive-foreground',
+    ARCHIVED: 'bg-secondary text-muted-foreground',
+  }
+
   return (
-    <div className="min-h-screen bg-background p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <CardTitle className="text-2xl">Календарь публикаций</CardTitle>
-            <CardDescription>
-              Планируйте и управляйте публикациями на неделю. Перетаскивайте посты для изменения даты.
-            </CardDescription>
+    <div className="space-y-6 md:space-y-8">
+      <Card className="border-border bg-card">
+        <CardContent className="flex flex-col gap-5 p-5 md:flex-row md:items-end md:justify-between md:p-7">
+          <div className="space-y-2">
+            <Badge variant="secondary" className="w-fit">
+              Content Planner
+            </Badge>
+            <div>
+              <p className="text-[1.5rem] font-semibold tracking-[-0.02em]">Календарь публикаций</p>
+              <p className="mt-1 text-[0.9375rem] text-muted-foreground">
+                Простое и мощное планирование: расписание, очередь контента и статусы публикации в одном ритме.
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-border bg-background p-1">
+              {viewModes.map((mode) => {
+                const Icon = mode.icon
+                const isActive = mode.id === viewMode
+                return (
+                  <button
+                    key={mode.id}
+                    onClick={() => setViewMode(mode.id)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[0.8125rem] font-medium transition-all',
+                      isActive ? 'bg-secondary text-foreground shadow-[var(--shadow-xs)]' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {mode.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            <Button
+              variant="outline"
               onClick={async () => {
                 const res = await fetch('/api/publish/dispatch', {
                   method: 'POST',
@@ -108,40 +160,61 @@ export default function CalendarPage() {
                   setPublishJobsProcessed(payload.data.processed)
                 }
               }}
-              className="px-4 py-2 border rounded-md hover:bg-accent transition-colors"
             >
+              <Send className="h-4 w-4" />
               Запустить очередь публикаций
-            </button>
-            <button
-              onClick={() => setIsCreateFormOpen(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
+            </Button>
+            <Button onClick={() => setIsCreateFormOpen(true)}>
+              <Rocket className="h-4 w-4" />
               + Новый пост
-            </button>
+            </Button>
           </div>
-        </div>
-        {publishJobsProcessed !== null && (
-          <p className="text-sm text-muted-foreground mb-4">
-            Обработано задач публикации: {publishJobsProcessed}
-          </p>
-        )}
 
-        {isCreateFormOpen && (
-          <Card className="mb-6">
-            <CardContent className="pt-6">
-              <CreatePostForm
-                userId={user.id}
-                onSuccess={() => {
-                  fetchPosts()
-                  setIsCreateFormOpen(false)
-                }}
-                onCancel={() => setIsCreateFormOpen(false)}
-              />
-            </CardContent>
-          </Card>
-        )}
+          <div className="grid grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
+            <div className="rounded-xl border border-border bg-background px-3 py-2">
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Scheduled</p>
+              <p className="mt-1 text-[1.125rem] font-semibold">{scheduledCount}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background px-3 py-2">
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Queue</p>
+              <p className="mt-1 text-[1.125rem] font-semibold">{queuedCount}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background px-3 py-2">
+              <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-muted-foreground">Published</p>
+              <p className="mt-1 text-[1.125rem] font-semibold">{publishedCount}</p>
+            </div>
+          </div>
+          </CardContent>
+      </Card>
 
+      {publishJobsProcessed !== null && (
+        <p className="text-[0.875rem] text-muted-foreground">Обработано задач публикации: {publishJobsProcessed}</p>
+      )}
+
+      {isCreateFormOpen && (
         <Card>
+          <CardContent className="pt-6">
+            <CreatePostForm
+              userId={user.id}
+              onSuccess={() => {
+                fetchPosts()
+                setIsCreateFormOpen(false)
+              }}
+              onCancel={() => setIsCreateFormOpen(false)}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {viewMode === 'week' ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
+              <CalendarRange className="h-4 w-4 text-primary" />
+              Week View
+            </CardTitle>
+            <CardDescription>Планируйте неделю с drag-and-drop feel и чистой видимостью расписания.</CardDescription>
+          </CardHeader>
           <CardContent className="p-0">
             <PostCalendar
               posts={posts}
@@ -152,24 +225,94 @@ export default function CalendarPage() {
             />
           </CardContent>
         </Card>
+      ) : null}
 
-        <Card className="mt-6">
+      {viewMode === 'month' ? (
+        <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Черновики</CardTitle>
-            <CardDescription>
-              Посты из генератора и ручного создания. Запланируйте их через календарь или отредактируйте.
-            </CardDescription>
+            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              Month View
+            </CardTitle>
+            <CardDescription>Обзор публикационной нагрузки и ключевых дней на месяц.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div key={index} className="rounded-2xl border border-border bg-card p-4">
+                  <p className="text-[0.8125rem] text-muted-foreground">Week {index + 1}</p>
+                  <p className="mt-1 text-[1.125rem] font-semibold">{Math.max(1, scheduledCount - index)}</p>
+                  <p className="text-[0.8125rem] text-muted-foreground">scheduled posts</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-[0.875rem] text-muted-foreground">
+              Месячный режим фокусируется на стратегическом ритме. Переносы и детализация доступны в Week View.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {viewMode === 'list' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
+              <ListFilter className="h-4 w-4 text-primary" />
+              List View
+            </CardTitle>
+            <CardDescription>Очередь контента с платформой, статусом публикации и авто-публикацией.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2.5">
+            {posts.length === 0 ? (
+              <p className="text-[0.9375rem] text-muted-foreground">Постов в календаре пока нет.</p>
+            ) : (
+              posts.map((post) => (
+                <div key={post.id} className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="truncate text-[0.9375rem] font-medium">{post.title ?? 'Без заголовка'}</p>
+                      <p className="mt-1 text-[0.8125rem] text-muted-foreground">
+                        {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : 'Дата не назначена'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">{post.platform ?? 'Unknown'}</Badge>
+                    <Badge className={cn(statusClassMap[post.status] ?? 'bg-secondary text-secondary-foreground')}>
+                      {post.status ?? 'DRAFT'}
+                    </Badge>
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-secondary px-2 py-1 text-[0.75rem] text-muted-foreground">
+                      <Clock3 className="h-3 w-3" />
+                      {post.autoPublish ? 'Auto-publish ON' : 'Manual publish'}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
+              <CalendarClock className="h-4 w-4 text-primary" />
+              Content Queue
+            </CardTitle>
+            <CardDescription>Черновики и контент в очереди на публикацию.</CardDescription>
           </CardHeader>
           <CardContent>
             {drafts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Черновиков пока нет.</p>
+              <p className="text-[0.9375rem] text-muted-foreground">Черновиков пока нет.</p>
             ) : (
               <div className="space-y-3">
-                {drafts.slice(0, 10).map((draft) => (
-                  <div key={draft.id} className="rounded-md border p-3">
-                    <p className="font-medium">{draft.title ?? 'Без заголовка'}</p>
-                    <p className="text-sm text-muted-foreground line-clamp-2">{draft.content}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
+                {drafts.slice(0, 8).map((draft) => (
+                  <div key={draft.id} className="rounded-xl border border-border bg-card p-3.5">
+                    <p className="text-[0.9375rem] font-medium">{draft.title ?? 'Без заголовка'}</p>
+                    <p className="mt-1 line-clamp-2 text-[0.875rem] text-muted-foreground">{draft.content}</p>
+                    <p className="mt-2 text-[0.75rem] text-muted-foreground">
                       Платформа: {draft.platform}
                       {draft.brand?.name ? ` | Бренд: ${draft.brand.name}` : ''}
                     </p>
@@ -180,47 +323,36 @@ export default function CalendarPage() {
           </CardContent>
         </Card>
 
-        {/* Status Legend */}
-        <Card className="mt-6">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Легенда статусов</CardTitle>
+            <CardTitle className="inline-flex items-center gap-2 text-[1.125rem]">
+              <CircleDot className="h-4 w-4 text-primary" />
+              Publishing State
+            </CardTitle>
+            <CardDescription>Спокойные индикаторы статуса и быстрый контроль состояния.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-gray-500"></span>
-                <span className="text-sm">Черновик (DRAFT)</span>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
+                <span className="text-[0.875rem]">Черновик</span>
+                <Badge className={statusClassMap.DRAFT}>DRAFT</Badge>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                <span className="text-sm">Запланирован (SCHEDULED)</span>
+              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
+                <span className="text-[0.875rem]">Запланирован</span>
+                <Badge className={statusClassMap.SCHEDULED}>SCHEDULED</Badge>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-green-500"></span>
-                <span className="text-sm">Опубликован (PUBLISHED)</span>
+              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
+                <span className="text-[0.875rem]">Опубликован</span>
+                <Badge className={statusClassMap.PUBLISHED}>PUBLISHED</Badge>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500"></span>
-                <span className="text-sm">Ошибка (FAILED)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-gray-400"></span>
-                <span className="text-sm">Архив (ARCHIVED)</span>
+              <div className="flex items-center justify-between rounded-xl border border-border bg-card p-3">
+                <span className="text-[0.875rem]">Ошибка</span>
+                <Badge className={statusClassMap.FAILED}>FAILED</Badge>
               </div>
             </div>
-
-            <div className="mt-4 pt-4 border-t">
-              <h4 className="font-medium mb-2">Правила смены статусов:</h4>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• DRAFT → SCHEDULED (с указанием даты не раньше +5 мин)</li>
-                <li>• DRAFT → PUBLISHED (незамедлительная публикация)</li>
-                <li>• SCHEDULED → PUBLISHED (только если scheduledAt ≤ now)</li>
-                <li>• SCHEDULED → DRAFT (возврат в черновики)</li>
-                <li>• SCHEDULED → FAILED (ошибка публикации)</li>
-                <li>• FAILED → DRAFT (возврат для исправления)</li>
-                <li>• PUBLISHED → ARCHIVED (архивация)</li>
-              </ul>
-            </div>
+            <p className="text-[0.8125rem] text-muted-foreground">
+              Подсказка: для точного перепланирования используйте Week View — он лучше всего передает drag-and-drop workflow.
+            </p>
           </CardContent>
         </Card>
       </div>
