@@ -74,6 +74,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
       {
         topic: topic.trim(),
         platform,
+        provider: "gigachat",
         brandId: brandId === "none" ? undefined : brandId,
         maxLength: maxLength[0],
       },

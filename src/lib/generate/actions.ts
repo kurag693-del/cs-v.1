@@ -1,21 +1,24 @@
 'use server'
 
-import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { prisma } from '@/lib/db'
+import { Prisma } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { Prisma } from '@prisma/client'
 import { routeModel, type GenerationTask, type RouteDecision } from '@/lib/ai/router'
-import { moderator } from '@/lib/ai/moderation'
-import { trackTokenUsage, calculateCost } from '@/lib/ai/utils'
 import type { GenerationResult } from '@/lib/ai/types'
+import { getAIProvider } from '@/lib/ai/providers/registry'
+import type { AIProviderId } from '@/lib/ai/providers/types'
+import { prisma } from '@/lib/db'
+import { moderator } from '@/lib/ai/moderation'
+import { calculateCost, trackTokenUsage } from '@/lib/ai/utils'
+import { generatedJsonSchema, validateGeneratedContent } from '@/lib/validation/generation-output'
 
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
   prompt: z.string().min(5, 'Prompt must be at least 5 characters').max(5000, 'Prompt must not exceed 5000 characters'),
   platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'VK', 'TIKTOK', 'YOUTUBE']).optional(),
+  provider: z.enum(['gigachat', 'yandexgpt', 'vkai']).default('gigachat'),
   brandId: z.string().optional(),
   profileId: z.string().optional(),
   maxLength: z.number().int().min(80).max(5000).default(800),
@@ -31,6 +34,7 @@ type GenerateTextPayload =
       topic?: string
       prompt?: string
       platform?: string
+      provider?: AIProviderId
       brandId?: string
       profileId?: string
       maxLength?: number
@@ -41,6 +45,23 @@ type GenerateTextPayload =
       metadata?: Record<string, unknown>
     }
 
+export type PromptBuildInput = {
+  topic: string
+  platform: string
+  maxLength: number
+  contentType: 'post' | 'story' | 'tips' | 'announcement'
+  toneOverride: 'brand' | 'humor' | 'formal'
+  includeEmojis: boolean
+}
+
+const TEXT_PROMPT_TEMPLATE = (() => {
+  try {
+    return readFileSync(path.join(process.cwd(), 'prompts', 'v1_text_generator.md'), 'utf-8')
+  } catch {
+    return ''
+  }
+})()
+
 function normalizeGenerateInput(payload: GenerateTextPayload) {
   if (payload instanceof FormData) {
     const metadataRaw = payload.get('metadata')
@@ -48,17 +69,15 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       type: payload.get('type') ?? 'social_post',
       prompt: payload.get('prompt') ?? payload.get('topic'),
       platform: payload.get('platform'),
+      provider: payload.get('provider') ?? 'gigachat',
       brandId: payload.get('brandId'),
       profileId: payload.get('profileId'),
       maxLength: Number(payload.get('maxLength') ?? 800),
-      contentType: (payload.get('contentType')?.toString() as 'post' | 'story' | 'tips' | 'announcement' | undefined) ?? 'post',
-      toneOverride: (payload.get('toneOverride')?.toString() as 'brand' | 'humor' | 'formal' | undefined) ?? 'brand',
+      contentType: (payload.get('contentType')?.toString() as PromptBuildInput['contentType'] | undefined) ?? 'post',
+      toneOverride: (payload.get('toneOverride')?.toString() as PromptBuildInput['toneOverride'] | undefined) ?? 'brand',
       includeEmojis: payload.get('includeEmojis')?.toString() !== 'false',
       platformLabel: payload.get('platform')?.toString() ?? 'Instagram',
-      metadata:
-        typeof metadataRaw === 'string' && metadataRaw.length > 0
-          ? (JSON.parse(metadataRaw) as Record<string, unknown>)
-          : undefined,
+      metadata: typeof metadataRaw === 'string' && metadataRaw.length > 0 ? (JSON.parse(metadataRaw) as Record<string, unknown>) : undefined,
     }
   }
 
@@ -77,6 +96,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     type: payload.type ?? 'social_post',
     prompt: payload.prompt ?? payload.topic,
     platform: normalizedPlatform,
+    provider: payload.provider ?? 'gigachat',
     brandId: payload.brandId,
     profileId: payload.profileId,
     maxLength: payload.maxLength ?? 800,
@@ -88,120 +108,16 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
   }
 }
 
-const GIGACHAT_BASE_URL = process.env.GIGACHAT_BASE_URL ?? 'https://gigachat.devices.sberbank.ru'
-const GIGACHAT_AUTH_URL = process.env.GIGACHAT_AUTH_URL ?? 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
-const GIGACHAT_SCOPE = process.env.GIGACHAT_SCOPE ?? 'GIGACHAT_API_PERS'
-const GIGACHAT_MODEL = process.env.GIGACHAT_MODEL ?? 'GigaChat'
-const GIGACHAT_ALLOW_SELF_SIGNED = process.env.GIGACHAT_ALLOW_SELF_SIGNED === 'true'
-const FORBIDDEN_TEMPLATE_PHRASES = [
-  'в современном мире',
-  'уникальный контент',
-  'инновационный подход',
-  'цифровая эпоха',
-] as const
-
-const TEXT_PROMPT_TEMPLATE = (() => {
-  try {
-    return readFileSync(path.join(process.cwd(), 'prompts', 'v1_text_generator.md'), 'utf-8')
-  } catch {
-    return ''
-  }
-})()
-
-const GeneratedJsonSchema = z.object({
-  hook: z.string().optional().default(''),
-  body: z.string().min(300, 'Generated body is too short'),
-  hashtags: z
-    .union([z.array(z.string()), z.string()])
-    .optional()
-    .transform((value) => {
-      if (Array.isArray(value)) {
-        return value
-          .map((item) => item.trim())
-          .filter(Boolean)
-          .map((item) => (item.startsWith('#') ? item : `#${item}`))
-      }
-      if (typeof value === 'string' && value.trim().length > 0) {
-        return value
-          .split(/\s+/)
-          .map((item) => item.trim())
-          .filter(Boolean)
-          .map((item) => (item.startsWith('#') ? item : `#${item}`))
-      }
-      return []
-    }),
-  cta: z.string().optional().default(''),
-})
-
-type PromptBuildInput = {
-  topic: string
-  platform: string
-  maxLength: number
-  contentType: 'post' | 'story' | 'tips' | 'announcement'
-  toneOverride: 'brand' | 'humor' | 'formal'
-  includeEmojis: boolean
-}
-
-function validateGeneratedContent(
-  generated: { hook: string; body: string; hashtags: string[]; cta: string },
-  input: PromptBuildInput
-): { valid: true } | { valid: false; message: string } {
-  const minLength = Math.max(300, Math.floor(input.maxLength * 0.6))
-  if (generated.body.trim().length < minLength) {
-    return { valid: false, message: `Слишком короткий текст: минимум ${minLength} символов в body` }
-  }
-
-  const fullText = `${generated.hook}\n${generated.body}\n${generated.cta}`.toLowerCase()
-  if (FORBIDDEN_TEMPLATE_PHRASES.some((phrase) => fullText.includes(phrase))) {
-    return { valid: false, message: 'Ответ содержит шаблонные фразы из запрещенного списка' }
-  }
-
-  const hook = generated.hook.trim()
-  const body = generated.body.trim()
-  if (!hook || !body) {
-    return { valid: false, message: 'Нарушена структура: отсутствует хук или основной текст' }
-  }
-
-  return { valid: true }
-}
-
-type GigaChatTokenResponse = { access_token: string }
-type GigaChatCompletionResponse = {
-  model?: string
-  choices?: Array<{
-    message?: {
-      content?: string
-    }
-  }>
-}
-
-async function withOptionalSelfSignedTls<T>(callback: () => Promise<T>): Promise<T> {
-  if (!GIGACHAT_ALLOW_SELF_SIGNED) {
-    return callback()
-  }
-
-  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-
-  try {
-    return await callback()
-  } finally {
-    if (previous === undefined) {
-      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
-    } else {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous
-    }
-  }
-}
-
-function extractJsonObject(raw: string): string | null {
+export function extractJsonObject(raw: string): string | null {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
   if (start < 0 || end < 0 || end <= start) return null
   return raw.slice(start, end + 1)
 }
 
-function parseGenerationFromText(raw: string): { hook: string; body: string; hashtags: string[]; cta: string } {
+type ParsedGenerated = { hook: string; body: string; hashtags: string[]; cta: string }
+
+export function parseGenerationFromText(raw: string): ParsedGenerated {
   const lines = raw
     .split('\n')
     .map((line) => line.trim())
@@ -224,112 +140,80 @@ function parseGenerationFromText(raw: string): { hook: string; body: string; has
 
   const hook = textWithoutHashtags[0] ?? lines[0] ?? ''
   const ctaCandidate = textWithoutHashtags[textWithoutHashtags.length - 1] ?? ''
-  const cta =
+  const inferredCta =
     ctaCandidate !== hook && /!|\?|подпиш|нажм|коммент|переход|попробуйте|узнайте/i.test(ctaCandidate)
       ? ctaCandidate
-      : ''
+      : 'Напишите в комментариях ваше мнение.'
 
-  const bodyLines = textWithoutHashtags.slice(1, cta ? -1 : undefined)
+  const bodyLines = textWithoutHashtags.slice(1, ctaCandidate === inferredCta ? -1 : undefined)
   const body = bodyLines.join('\n').trim()
 
   return {
     hook,
     body,
     hashtags: allHashtags,
-    cta,
+    cta: inferredCta,
   }
 }
 
-async function getGigaChatAccessToken(): Promise<string> {
-  const clientId = process.env.GIGACHAT_CLIENT_ID ?? process.env.CLIENT_ID
-  const clientSecret = process.env.GIGACHAT_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? process.env.Client_Secret
-  const explicitAuthKey = process.env.GIGACHAT_AUTH_KEY
-  const authKey =
-    explicitAuthKey ??
-    (clientId && clientSecret ? Buffer.from(`${clientId}:${clientSecret}`).toString('base64') : undefined)
-
-  if (!authKey) {
-    throw new Error(
-      'Не задана авторизация GigaChat. Укажите GIGACHAT_AUTH_KEY или пару GIGACHAT_CLIENT_ID + GIGACHAT_CLIENT_SECRET'
-    )
+export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, unknown> | null): string {
+  let prompt = TEXT_PROMPT_TEMPLATE
+  const toneMap: Record<PromptBuildInput['toneOverride'], string> = {
+    brand: 'по голосу бренда',
+    humor: 'юмористичный (🎭), но без кринжа и штампов',
+    formal: 'формальный и деловой (💼), без фамильярности',
+  }
+  const contentTypeMap: Record<PromptBuildInput['contentType'], string> = {
+    post: 'классический пост',
+    story: 'сторителлинг-пост',
+    tips: 'пост-советы (список и практические пункты)',
+    announcement: 'анонс/объявление',
   }
 
-  const response = await withOptionalSelfSignedTls(() =>
-    fetch(GIGACHAT_AUTH_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${authKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-        'User-Agent': 'CreativeStudio/1.0',
-        RqUID: randomUUID(),
-      },
-      body: new URLSearchParams({
-        scope: GIGACHAT_SCOPE,
-      }),
-    })
-  )
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Ошибка авторизации GigaChat: ${response.status} ${errorText}`)
+  const replacements: Record<string, string> = {
+    topic: input.topic,
+    platform: input.platform,
+    brand_voice_json: JSON.stringify(brandVoice ?? {}, null, 2),
+    max_length_chars: input.maxLength.toString(),
+    min_length_chars: Math.max(300, Math.floor(input.maxLength * 0.6)).toString(),
+    include_hashtags: 'true',
+    cta_type: 'оставь комментарий',
+    avoid_phrases: '["в современном мире", "уникальный контент", "инновационный подход", "цифровая эпоха"]',
+    content_type: contentTypeMap[input.contentType],
+    tone_override: toneMap[input.toneOverride],
+    include_emojis: input.includeEmojis ? 'true' : 'false',
   }
 
-  const data = (await response.json()) as GigaChatTokenResponse
-  if (!data.access_token) {
-    throw new Error('GigaChat не вернул access_token')
-  }
+  prompt = prompt.replace(/\{\{([a-z0-9_]+)\}\}/gi, (match, variableName: string) => {
+    const replacement = replacements[variableName]
+    if (replacement === undefined) {
+      throw new Error(`Неизвестная переменная промпта: ${match}`)
+    }
+    return replacement
+  })
 
-  return data.access_token
+  return `## Critical Runtime Directives
+- Строго используй тип контента: ${contentTypeMap[input.contentType]}.
+- Строго используй тон: ${toneMap[input.toneOverride]}.
+- Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
+
+${prompt}
+
+## Runtime Overrides
+- Тип контента: ${contentTypeMap[input.contentType]}
+- Тон: ${toneMap[input.toneOverride]}
+- Эмодзи: ${input.includeEmojis ? 'разрешены, но умеренно' : 'не использовать'}
+`
 }
 
-async function generateWithGigaChat(prompt: string, temperature: number, maxTokens: number): Promise<{ content: string; model: string }> {
-  const accessToken = await getGigaChatAccessToken()
-  const response = await withOptionalSelfSignedTls(() =>
-    fetch(`${GIGACHAT_BASE_URL}/api/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'CreativeStudio/1.0',
-      },
-      body: JSON.stringify({
-        model: GIGACHAT_MODEL,
-        stream: false,
-        temperature,
-        max_tokens: maxTokens,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    })
-  )
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Ошибка запроса к GigaChat: ${response.status} ${errorText}`)
-  }
-
-  const data = (await response.json()) as GigaChatCompletionResponse
-  const content = data.choices?.[0]?.message?.content
-  if (!content) {
-    throw new Error('GigaChat вернул пустой ответ')
-  }
-
-  return { content, model: data.model ?? GIGACHAT_MODEL }
-}
-
-export async function generateText(
-  payload: GenerateTextPayload,
-  userId: string
-): Promise<GenerationResult> {
+export async function generateText(payload: GenerateTextPayload, userId: string): Promise<GenerationResult> {
   try {
     const normalizedInput = normalizeGenerateInput(payload)
-
-    // 1. Validate input
     const validated = GenerateInputSchema.safeParse({
       type: normalizedInput.type,
       prompt: normalizedInput.prompt,
       platform: normalizedInput.platform,
+      provider: normalizedInput.provider,
       brandId: normalizedInput.brandId,
       profileId: normalizedInput.profileId,
       maxLength: normalizedInput.maxLength,
@@ -347,111 +231,63 @@ export async function generateText(
       }
     }
 
-    const { type, prompt, platform, brandId, profileId, maxLength, contentType, toneOverride, includeEmojis, metadata } =
-      validated.data
+    const { type, prompt, platform, provider, brandId, profileId, maxLength, contentType, toneOverride, includeEmojis, metadata } = validated.data
 
-    // 2. Resolve user
-    const localUser = await prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-      select: { id: true },
-    })
-
+    const localUser = await prisma.user.findFirst({ where: { id: userId, deletedAt: null }, select: { id: true } })
     if (!localUser) {
-      return {
-        success: false,
-        error: 'Пользователь не найден',
-        code: 'AUTH_ERROR',
-      }
+      return { success: false, error: 'Пользователь не найден', code: 'AUTH_ERROR' }
     }
 
-    // Get profile with credits (subscriptions table in Prisma)
-    const dbProfile = await prisma.profile.findUnique({
-      where: { userId },
-      include: {
-        user: true,
-      },
-    })
-
-    const subscription = await prisma.subscription.findUnique({
-      where: { userId },
-    })
-
+    const dbProfile = await prisma.profile.findUnique({ where: { userId }, include: { user: true } })
+    const subscription = await prisma.subscription.findUnique({ where: { userId } })
     if (!subscription) {
-      // Create default free subscription
       await prisma.subscription.create({
-        data: {
-          userId,
-          tier: 'FREE',
-          status: 'ACTIVE',
-          generationLimit: 100,
-          postLimit: 50,
-        },
+        data: { userId, tier: 'FREE', status: 'ACTIVE', generationLimit: 100, postLimit: 50 },
       })
     }
 
-    const credits = subscription?.generationLimit || 100
-    const usedGenerations = await prisma.generation.count({
-      where: { userId, status: 'COMPLETED' },
-    })
-
-    const remainingCredits = credits - usedGenerations
-
-    // 3. Check credits
-    if (remainingCredits <= 0) {
-      return {
-        success: false,
-        error: 'Insufficient credits. Please upgrade your plan.',
-        code: 'INSUFFICIENT_CREDITS',
-      }
+    const credits = subscription?.generationLimit ?? 100
+    const usedGenerations = await prisma.generation.count({ where: { userId, status: 'COMPLETED' } })
+    if (credits - usedGenerations <= 0) {
+      return { success: false, error: 'Insufficient credits. Please upgrade your plan.', code: 'INSUFFICIENT_CREDITS' }
     }
 
-    // 4. Moderation check
     const moderationResult = await moderator.moderateContent(prompt)
-
     if (!moderationResult.isApproved) {
-      // Record the blocked generation
       await prisma.generation.create({
         data: {
           userId,
-          profileId: profileId,
+          profileId,
           type,
           prompt,
           status: 'FAILED',
           error: `Blocked by moderation: ${moderationResult.reason}`,
-          metadata: ({
-            moderation: moderationResult,
-            ...metadata,
-          } as unknown as Prisma.InputJsonValue),
+          metadata: ({ moderation: moderationResult, provider, ...metadata } as unknown) as Prisma.InputJsonValue,
           model: 'moderation_block',
           tokens: 0,
         },
       })
 
-      return {
-        success: false,
-        error: `Content blocked: ${moderationResult.reason}`,
-        code: 'CONTENT_BLOCKED',
-      }
+      return { success: false, error: `Content blocked: ${moderationResult.reason}`, code: 'CONTENT_BLOCKED' }
     }
 
-    // 5. Route model selection
-    const route: RouteDecision = routeModel(type, subscription?.tier || 'FREE')
+    const route: RouteDecision = routeModel(type as GenerationTask, subscription?.tier ?? 'FREE')
+    const aiProvider = getAIProvider(provider)
 
-    // 6. Fetch brand if brandId provided
     let brand = null
     if (brandId) {
-      brand = await prisma.brand.findUnique({
-        where: { id: brandId, userId, deletedAt: null },
-      })
+      brand = await prisma.brand.findUnique({ where: { id: brandId, userId, deletedAt: null } })
     }
 
-    // 7. Build enhanced prompt using prompt library
     const brandVoiceData: Record<string, unknown> = {
       ...(dbProfile?.brandVoice ? { profileBrandVoice: dbProfile.brandVoice } : {}),
       ...(brand?.name ? { brandName: brand.name } : {}),
       ...(brand?.voice ? { brandVoice: brand.voice } : {}),
       ...(brand?.tone ? { brandTone: brand.tone } : {}),
+      ...(brand?.colors?.length ? { brandColors: brand.colors } : {}),
+      ...(brand?.description ? { brandDescription: brand.description } : {}),
     }
+
     const enhancedPrompt = buildPrompt(
       {
         topic: prompt,
@@ -464,11 +300,9 @@ export async function generateText(
       brandVoiceData
     )
 
-    // 8. Estimate costs
-    const estimatedTokens = 1500 // average response
+    const estimatedTokens = aiProvider.estimateTokens({ prompt: enhancedPrompt, maxTokens: route.maxTokens })
     const estimatedCost = calculateCost(estimatedTokens, route.model)
 
-    // 9. Create generation record (pending)
     const generation = await prisma.generation.create({
       data: {
         userId,
@@ -483,57 +317,51 @@ export async function generateText(
           moderation: moderationResult,
           route,
           platform,
+          provider,
           estimatedCost,
           ...metadata,
-        } as unknown as Prisma.InputJsonValue),
+        } as unknown) as Prisma.InputJsonValue,
       },
     })
 
-    // 10. Real LLM call via GigaChat
-    const gigaResult = await generateWithGigaChat(enhancedPrompt, route.temperature, route.maxTokens)
-    const jsonPayload = extractJsonObject(gigaResult.content)
-    let generated: z.infer<typeof GeneratedJsonSchema>
+    const providerResult = await aiProvider.generate({
+      prompt: enhancedPrompt,
+      temperature: route.temperature,
+      maxTokens: route.maxTokens,
+    })
+
+    const jsonPayload = extractJsonObject(providerResult.content)
+    let generated: ParsedGenerated
     if (jsonPayload) {
       try {
-        const parsedGeneration = GeneratedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
-        if (parsedGeneration.success) {
-          generated = parsedGeneration.data
-        } else {
-          generated = parseGenerationFromText(gigaResult.content)
-        }
+        const parsedGeneration = generatedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
+        generated = parsedGeneration.success ? parsedGeneration.data : parseGenerationFromText(providerResult.content)
       } catch {
-        generated = parseGenerationFromText(gigaResult.content)
+        generated = parseGenerationFromText(providerResult.content)
       }
     } else {
-      generated = parseGenerationFromText(gigaResult.content)
+      generated = parseGenerationFromText(providerResult.content)
     }
-    const generatedValidation = validateGeneratedContent(generated, {
-      topic: prompt,
-      platform: normalizedInput.platformLabel ?? platform ?? 'Instagram',
-      maxLength,
-      contentType,
-      toneOverride,
-      includeEmojis,
-    })
+
+    const minLength = Math.max(300, Math.floor(maxLength * 0.6))
+    const generatedValidation = validateGeneratedContent(generated, minLength)
     if (!generatedValidation.valid) {
       await prisma.generation.update({
         where: { id: generation.id },
         data: {
-          status: 'FAILED' as const,
+          status: 'FAILED',
           error: generatedValidation.message,
-          metadata: ({
+          metadata: {
             ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
             failedAt: new Date(),
             validationError: generatedValidation.message,
-          } as unknown as Prisma.InputJsonValue),
+            provider,
+          } as Prisma.InputJsonValue,
         },
       })
-      return {
-        success: false,
-        error: generatedValidation.message,
-        code: 'VALIDATION_ERROR',
-      }
+      return { success: false, error: generatedValidation.message, code: 'VALIDATION_ERROR' }
     }
+
     const generatedContent = `${generated.hook}\n\n${generated.body}\n\n${generated.hashtags.join(' ')}\n\n${generated.cta}`.trim()
     const generationOutputJson = JSON.stringify({
       hook: generated.hook,
@@ -542,29 +370,31 @@ export async function generateText(
       cta: generated.cta,
     })
 
-    // 11. Update generation with result
     await prisma.generation.update({
       where: { id: generation.id },
       data: {
-        status: 'COMPLETED' as const,
+        status: 'COMPLETED',
         output: generationOutputJson,
         tokens: estimatedTokens,
-        metadata: ({
+        metadata: {
           ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
           completedAt: new Date(),
           actualCost: estimatedCost,
-          modelUsed: gigaResult.model,
-        } as unknown as Prisma.InputJsonValue),
+          modelUsed: providerResult.model,
+          provider: providerResult.provider,
+        } as Prisma.InputJsonValue,
       },
     })
 
-    // 12. Track token usage
     trackTokenUsage(
-      { promptTokens: 500, completionTokens: 1000, totalTokens: estimatedTokens },
+      {
+        promptTokens: Math.ceil(enhancedPrompt.length / 4),
+        completionTokens: Math.max(estimatedTokens - Math.ceil(enhancedPrompt.length / 4), 0),
+        totalTokens: estimatedTokens,
+      },
       estimatedCost
     )
 
-    // 13. Re-sync subscription credits (count COMPLETED generations)
     revalidatePath('/dashboard/generate')
 
     return {
@@ -572,10 +402,11 @@ export async function generateText(
       data: {
         generationId: generation.id,
         content: generatedContent,
-        model: gigaResult.model,
+        model: providerResult.model,
+        provider: providerResult.provider,
         tokens: {
-          promptTokens: 500,
-          completionTokens: 1000,
+          promptTokens: Math.ceil(enhancedPrompt.length / 4),
+          completionTokens: Math.max(estimatedTokens - Math.ceil(enhancedPrompt.length / 4), 0),
           totalTokens: estimatedTokens,
           estimatedCostUSD: estimatedCost,
         },
@@ -591,49 +422,5 @@ export async function generateText(
       code: 'INTERNAL_ERROR',
     }
   }
-}
-
-function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, unknown> | null): string {
-  let prompt = TEXT_PROMPT_TEMPLATE
-  const toneMap: Record<PromptBuildInput['toneOverride'], string> = {
-    brand: 'по голосу бренда',
-    humor: 'юмористичный (🎭), но без кринжа и штампов',
-    formal: 'формальный и деловой (💼), без фамильярности',
-  }
-  const contentTypeMap: Record<PromptBuildInput['contentType'], string> = {
-    post: 'классический пост',
-    story: 'сторителлинг-пост',
-    tips: 'пост-советы (список и практические пункты)',
-    announcement: 'анонс/объявление',
-  }
-  const replacements: Record<string, string> = {
-    '{{topic}}': input.topic,
-    '{{platform}}': input.platform,
-    '{{brand_voice_json}}': JSON.stringify(brandVoice ?? {}, null, 2),
-    '{{max_length_chars}}': input.maxLength.toString(),
-    '{{min_length_chars}}': Math.max(300, Math.floor(input.maxLength * 0.6)).toString(),
-    '{{include_hashtags}}': 'true',
-    '{{cta_type}}': 'оставь комментарий',
-    '{{avoid_phrases}}': '["в современном мире", "уникальный контент", "инновационный подход", "цифровая эпоха"]',
-    '{{content_type}}': contentTypeMap[input.contentType],
-    '{{tone_override}}': toneMap[input.toneOverride],
-    '{{include_emojis}}': input.includeEmojis ? 'true' : 'false',
-  }
-  for (const [key, value] of Object.entries(replacements)) {
-    prompt = prompt.replaceAll(key, value)
-  }
-
-  return `## Critical Runtime Directives
-- Строго используй тип контента: ${contentTypeMap[input.contentType]}.
-- Строго используй тон: ${toneMap[input.toneOverride]}.
-- Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
-
-${prompt}
-
-## Runtime Overrides
-- Тип контента: ${contentTypeMap[input.contentType]}
-- Тон: ${toneMap[input.toneOverride]}
-- Эмодзи: ${input.includeEmojis ? 'разрешены, но умеренно' : 'не использовать'}
-`
 }
 

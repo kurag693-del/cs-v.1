@@ -1,4 +1,5 @@
 import type { SubscriptionTier } from '@prisma/client'
+import type { AIProviderId } from '@/lib/ai/providers/types'
 
 export interface AIServiceConfig {
   provider: 'openrouter' | 'openai' | 'anthropic' | 'gemini' | 'liteLLM'
@@ -63,7 +64,7 @@ export interface GenerationInput {
   maxTokens?: number
   temperature?: number
   stream?: boolean
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 export interface UserCredits {
@@ -90,6 +91,7 @@ export interface GenerationResult {
     generationId: string
     content: string
     model: string
+    provider: AIProviderId
     tokens: TokenUsage
     costUSD: number
   }

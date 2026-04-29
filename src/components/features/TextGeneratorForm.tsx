@@ -43,6 +43,7 @@ type TextGeneratorFormProps = {
 type GenerateRequestPayload = {
   topic: string;
   platform: GenerateTextInput["platform"];
+  provider: GenerateTextInput["provider"];
   brandId?: string;
   maxLength: number;
   contentType: GenerateTextInput["contentType"];
@@ -68,6 +69,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     defaultValues: {
       topic: "",
       platform: "Instagram",
+      provider: "gigachat",
       brandId: undefined,
       maxLength: 800,
       contentType: "post",
@@ -129,6 +131,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     await runGeneration({
       topic: values.topic,
       platform: values.platform,
+      provider: values.provider,
       brandId: values.brandId || undefined,
       maxLength: values.maxLength,
       contentType: values.contentType ?? "post",
@@ -303,6 +306,32 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                         </SelectContent>
                       </Select>
                       <FormDescription>Выберите бренд, чтобы применить его tone of voice и правила.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="provider"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ИИ-провайдер</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="gigachat">GigaChat (рекомендуется)</SelectItem>
+                          <SelectItem value="yandexgpt">YandexGPT (beta)</SelectItem>
+                          <SelectItem value="vkai">VK AI (beta)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Выбор влияет на стоимость, скорость и доступность генерации.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
