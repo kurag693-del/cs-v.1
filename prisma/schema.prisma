@@ -19,6 +19,8 @@ enum Platform {
   LINKEDIN
   FACEBOOK
   INSTAGRAM
+  TELEGRAM
+  VK
   TIKTOK
   YOUTUBE
 }
@@ -77,10 +79,11 @@ model Profile {
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
+  passwordHash  String    @default("")
+  password      String?
   name          String?
   image         String?
   emailVerified DateTime?
-  password      String?
   role          UserRole  @default(USER)
   
   profiles     Profile[]
@@ -89,6 +92,7 @@ model User {
   posts        Post[]
   subscriptions Subscription[]
   credentials  PlatformCredential[]
+  sessions     Session[]
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -96,6 +100,16 @@ model User {
   
   @@index([email])
   @@index([deletedAt])
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Brand {

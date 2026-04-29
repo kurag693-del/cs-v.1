@@ -7,14 +7,10 @@ export async function POST(request: Request) {
     return fail('email and password are required', 400, 'INVALID_AUTH_INPUT')
   }
 
-  const formData = new FormData()
-  formData.set('email', payload.email)
-  formData.set('password', payload.password)
-
-  const result = await loginUser(formData)
+  const result = await loginUser(payload.email, payload.password)
   if (!result.success) {
     return fail(result.error ?? 'Login failed', 401, 'LOGIN_FAILED')
   }
 
-  return ok({ session: result.session })
+  return ok({ user: result.user })
 }

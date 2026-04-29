@@ -9,6 +9,7 @@ import { useForm } from "react-hook-form";
 import { generateText } from "@/lib/generate/actions";
 import { saveGenerationAsDraft } from "@/lib/posts/actions";
 import { generateTextInputSchema as GenerateTextInputSchema, type GenerateTextInput } from "@/lib/validation/generate";
+import { ImageUploader } from "@/components/features/ImageUploader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,6 +25,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
@@ -43,6 +45,9 @@ type GenerateRequestPayload = {
   platform: GenerateTextInput["platform"];
   brandId?: string;
   maxLength: number;
+  contentType: GenerateTextInput["contentType"];
+  toneOverride: GenerateTextInput["toneOverride"];
+  includeEmojis: boolean;
 };
 
 export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
@@ -56,6 +61,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [draftTitle, setDraftTitle] = useState("");
   const [copied, setCopied] = useState(false);
   const [lastRequest, setLastRequest] = useState<GenerateRequestPayload | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
 
   const form = useForm<GenerateTextInput>({
     resolver: zodResolver(GenerateTextInputSchema),
@@ -64,6 +70,9 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       platform: "Instagram",
       brandId: undefined,
       maxLength: 800,
+      contentType: "post",
+      toneOverride: "brand",
+      includeEmojis: true,
     },
   });
 
@@ -122,6 +131,9 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       platform: values.platform,
       brandId: values.brandId || undefined,
       maxLength: values.maxLength,
+      contentType: values.contentType ?? "post",
+      toneOverride: values.toneOverride ?? "brand",
+      includeEmojis: values.includeEmojis ?? true,
     });
   };
 
@@ -169,7 +181,13 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
 
     try {
       setIsSavingDraft(true);
-      const saved = await saveGenerationAsDraft(generationId, userId, currentPlatform, normalizedTitle);
+      const saved = await saveGenerationAsDraft(
+        generationId,
+        userId,
+        currentPlatform,
+        normalizedTitle,
+        uploadedImageUrl ? [uploadedImageUrl] : []
+      );
 
       if (!saved.success) {
         toast({
@@ -291,6 +309,57 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 />
               </div>
 
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="contentType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Тип контента</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="post">📝 Универсальный пост</SelectItem>
+                          <SelectItem value="story">📖 История/сторителлинг</SelectItem>
+                          <SelectItem value="tips">🎯 Советы/чек-лист</SelectItem>
+                          <SelectItem value="announcement">📣 Анонс/объявление</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Формат влияет на структуру и подачу текста.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="toneOverride"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Тон сообщения</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="brand">🧭 По голосу бренда</SelectItem>
+                          <SelectItem value="humor">🎭 Юмористичный</SelectItem>
+                          <SelectItem value="formal">💼 Формальный</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Переопределяет стиль ответа, не ломая фактуру темы.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
               <FormField
                 control={form.control}
                 name="maxLength"
@@ -312,6 +381,29 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   </FormItem>
                 )}
               />
+
+              <FormField
+                control={form.control}
+                name="includeEmojis"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="space-y-0.5">
+                      <FormLabel>Добавлять эмодзи</FormLabel>
+                      <FormDescription>Если отключено, генератор пишет текст без эмодзи.</FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={isGenerating}
+                        aria-label="Добавлять эмодзи"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <ImageUploader userId={userId} value={uploadedImageUrl} onChange={setUploadedImageUrl} />
 
               <Button type="submit" className="w-full" disabled={isGenerating}>
                 {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

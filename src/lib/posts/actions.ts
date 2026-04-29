@@ -11,6 +11,7 @@ const SaveGenerationAsDraftSchema = z.object({
   userId: z.string().min(1, 'userId обязателен'),
   platform: z.string().min(1, 'platform обязателен'),
   title: z.string().trim().min(1, 'Название поста обязательно').max(120, 'Название слишком длинное').optional(),
+  mediaUrls: z.array(z.string().url('Некорректный URL изображения')).max(10).optional(),
 })
 
 const SchedulePostSchema = z.object({
@@ -43,11 +44,13 @@ function mapGenerationPlatformToPostPlatform(platform: string): Platform | null 
 
   if (normalized === 'TikTok') return 'TIKTOK'
   if (normalized === 'Instagram') return 'INSTAGRAM'
-  if (normalized === 'Telegram') return 'INSTAGRAM'
-  if (normalized === 'VK') return 'INSTAGRAM'
+  if (normalized === 'Telegram') return 'TELEGRAM'
+  if (normalized === 'VK') return 'VK'
 
   if (normalized === 'TIKTOK') return 'TIKTOK'
   if (normalized === 'INSTAGRAM') return 'INSTAGRAM'
+  if (normalized === 'TELEGRAM') return 'TELEGRAM'
+  if (normalized === 'VK') return 'VK'
   if (normalized === 'TWITTER') return 'TWITTER'
   if (normalized === 'LINKEDIN') return 'LINKEDIN'
   if (normalized === 'FACEBOOK') return 'FACEBOOK'
@@ -321,7 +324,8 @@ export async function saveAsDraft(
   generationId: string,
   userId: string,
   platform: string,
-  title?: string
+  title?: string,
+  mediaUrls: string[] = []
 ): Promise<SaveAsDraftResult> {
   try {
     const parsed = SaveGenerationAsDraftSchema.safeParse({
@@ -329,6 +333,7 @@ export async function saveAsDraft(
       userId,
       platform,
       title,
+      mediaUrls,
     })
 
     if (!parsed.success) {
@@ -395,7 +400,7 @@ export async function saveAsDraft(
         generationId: generation.id,
         platform: postPlatform,
         content: contentText,
-        mediaUrls: [],
+        mediaUrls: parsed.data.mediaUrls ?? [],
         status: 'DRAFT',
         scheduledAt: null,
         metadata: {
@@ -435,9 +440,10 @@ export async function saveGenerationAsDraft(
   generationId: string,
   userId: string,
   platform: string,
-  title?: string
+  title?: string,
+  mediaUrls: string[] = []
 ): Promise<SaveAsDraftResult> {
-  return saveAsDraft(generationId, userId, platform, title)
+  return saveAsDraft(generationId, userId, platform, title, mediaUrls)
 }
 
 export async function schedulePost(

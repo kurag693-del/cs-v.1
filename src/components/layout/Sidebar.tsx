@@ -70,8 +70,7 @@ function SidebarContent({ onNavigate, compact = false }: SidebarContentProps) {
     await signOut();
 
     localStorage.removeItem("local-auth-user");
-    document.cookie = "sb-access-token=; Max-Age=0; Path=/";
-    document.cookie = "sb-refresh-token=; Max-Age=0; Path=/";
+    document.cookie = "session=; Max-Age=0; Path=/";
 
     router.push("/login");
     router.refresh();

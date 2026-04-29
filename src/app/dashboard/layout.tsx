@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AuthProvider } from "@/lib/auth/hooks";
@@ -11,12 +11,9 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const cookieStore = await cookies();
-  const accessToken = cookieStore.get("sb-access-token")?.value;
-
-  if (!accessToken) {
-    redirect("/login");
-  }
+  const requestHeaders = await headers();
+  const userId = requestHeaders.get("x-user-id");
+  if (!userId) redirect("/login");
 
   return (
     <AuthProvider>

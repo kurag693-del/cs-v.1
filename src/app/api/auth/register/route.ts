@@ -7,14 +7,10 @@ export async function POST(request: Request) {
     return fail('email and password are required', 400, 'INVALID_AUTH_INPUT')
   }
 
-  const formData = new FormData()
-  formData.set('email', payload.email)
-  formData.set('password', payload.password)
-
-  const result = await registerUser(formData)
+  const result = await registerUser(payload.email, payload.password)
   if (!result.success) {
     return fail(result.error ?? 'Registration failed', 400, 'REGISTER_FAILED')
   }
 
-  return ok({ message: result.message ?? 'Registration successful' })
+  return ok({ message: 'Registration successful', user: result.user })
 }

@@ -1,8 +1,9 @@
 'use server'
 
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { prisma } from '@/lib/db'
-import { createClient } from '@/lib/auth/supabase'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
@@ -14,9 +15,13 @@ import type { GenerationResult } from '@/lib/ai/types'
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
   prompt: z.string().min(5, 'Prompt must be at least 5 characters').max(5000, 'Prompt must not exceed 5000 characters'),
-  platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']).optional(),
+  platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'VK', 'TIKTOK', 'YOUTUBE']).optional(),
   brandId: z.string().optional(),
   profileId: z.string().optional(),
+  maxLength: z.number().int().min(80).max(5000).default(800),
+  contentType: z.enum(['post', 'story', 'tips', 'announcement']).default('post'),
+  toneOverride: z.enum(['brand', 'humor', 'formal']).default('brand'),
+  includeEmojis: z.boolean().default(true),
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -29,6 +34,9 @@ type GenerateTextPayload =
       brandId?: string
       profileId?: string
       maxLength?: number
+      contentType?: 'post' | 'story' | 'tips' | 'announcement'
+      toneOverride?: 'brand' | 'humor' | 'formal'
+      includeEmojis?: boolean
       type?: string
       metadata?: Record<string, unknown>
     }
@@ -42,6 +50,11 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       platform: payload.get('platform'),
       brandId: payload.get('brandId'),
       profileId: payload.get('profileId'),
+      maxLength: Number(payload.get('maxLength') ?? 800),
+      contentType: (payload.get('contentType')?.toString() as 'post' | 'story' | 'tips' | 'announcement' | undefined) ?? 'post',
+      toneOverride: (payload.get('toneOverride')?.toString() as 'brand' | 'humor' | 'formal' | undefined) ?? 'brand',
+      includeEmojis: payload.get('includeEmojis')?.toString() !== 'false',
+      platformLabel: payload.get('platform')?.toString() ?? 'Instagram',
       metadata:
         typeof metadataRaw === 'string' && metadataRaw.length > 0
           ? (JSON.parse(metadataRaw) as Record<string, unknown>)
@@ -55,9 +68,9 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       : payload.platform === 'TikTok'
         ? 'TIKTOK'
         : payload.platform === 'VK'
-          ? 'FACEBOOK'
+          ? 'VK'
           : payload.platform === 'Telegram'
-            ? 'INSTAGRAM'
+            ? 'TELEGRAM'
             : payload.platform
 
   return {
@@ -66,12 +79,13 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     platform: normalizedPlatform,
     brandId: payload.brandId,
     profileId: payload.profileId,
+    maxLength: payload.maxLength ?? 800,
+    contentType: payload.contentType ?? 'post',
+    toneOverride: payload.toneOverride ?? 'brand',
+    includeEmojis: payload.includeEmojis ?? true,
+    platformLabel: payload.platform ?? 'Instagram',
     metadata: payload.metadata,
   }
-}
-
-function hasSupabaseConfig() {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 }
 
 const GIGACHAT_BASE_URL = process.env.GIGACHAT_BASE_URL ?? 'https://gigachat.devices.sberbank.ru'
@@ -79,10 +93,24 @@ const GIGACHAT_AUTH_URL = process.env.GIGACHAT_AUTH_URL ?? 'https://ngw.devices.
 const GIGACHAT_SCOPE = process.env.GIGACHAT_SCOPE ?? 'GIGACHAT_API_PERS'
 const GIGACHAT_MODEL = process.env.GIGACHAT_MODEL ?? 'GigaChat'
 const GIGACHAT_ALLOW_SELF_SIGNED = process.env.GIGACHAT_ALLOW_SELF_SIGNED === 'true'
+const FORBIDDEN_TEMPLATE_PHRASES = [
+  'в современном мире',
+  'уникальный контент',
+  'инновационный подход',
+  'цифровая эпоха',
+] as const
+
+const TEXT_PROMPT_TEMPLATE = (() => {
+  try {
+    return readFileSync(path.join(process.cwd(), 'prompts', 'v1_text_generator.md'), 'utf-8')
+  } catch {
+    return ''
+  }
+})()
 
 const GeneratedJsonSchema = z.object({
   hook: z.string().optional().default(''),
-  body: z.string().optional().default(''),
+  body: z.string().min(300, 'Generated body is too short'),
   hashtags: z
     .union([z.array(z.string()), z.string()])
     .optional()
@@ -104,6 +132,38 @@ const GeneratedJsonSchema = z.object({
     }),
   cta: z.string().optional().default(''),
 })
+
+type PromptBuildInput = {
+  topic: string
+  platform: string
+  maxLength: number
+  contentType: 'post' | 'story' | 'tips' | 'announcement'
+  toneOverride: 'brand' | 'humor' | 'formal'
+  includeEmojis: boolean
+}
+
+function validateGeneratedContent(
+  generated: { hook: string; body: string; hashtags: string[]; cta: string },
+  input: PromptBuildInput
+): { valid: true } | { valid: false; message: string } {
+  const minLength = Math.max(300, Math.floor(input.maxLength * 0.6))
+  if (generated.body.trim().length < minLength) {
+    return { valid: false, message: `Слишком короткий текст: минимум ${minLength} символов в body` }
+  }
+
+  const fullText = `${generated.hook}\n${generated.body}\n${generated.cta}`.toLowerCase()
+  if (FORBIDDEN_TEMPLATE_PHRASES.some((phrase) => fullText.includes(phrase))) {
+    return { valid: false, message: 'Ответ содержит шаблонные фразы из запрещенного списка' }
+  }
+
+  const hook = generated.hook.trim()
+  const body = generated.body.trim()
+  if (!hook || !body) {
+    return { valid: false, message: 'Нарушена структура: отсутствует хук или основной текст' }
+  }
+
+  return { valid: true }
+}
 
 type GigaChatTokenResponse = { access_token: string }
 type GigaChatCompletionResponse = {
@@ -272,6 +332,10 @@ export async function generateText(
       platform: normalizedInput.platform,
       brandId: normalizedInput.brandId,
       profileId: normalizedInput.profileId,
+      maxLength: normalizedInput.maxLength,
+      contentType: normalizedInput.contentType,
+      toneOverride: normalizedInput.toneOverride,
+      includeEmojis: normalizedInput.includeEmojis,
       metadata: normalizedInput.metadata,
     })
 
@@ -283,43 +347,20 @@ export async function generateText(
       }
     }
 
-    const { type, prompt, platform, brandId, profileId, metadata } = validated.data
+    const { type, prompt, platform, brandId, profileId, maxLength, contentType, toneOverride, includeEmojis, metadata } =
+      validated.data
 
-    // 2. Resolve user (Supabase session when configured, otherwise local Prisma mode)
-    if (hasSupabaseConfig()) {
-      const supabase = createClient()
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser()
+    // 2. Resolve user
+    const localUser = await prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true },
+    })
 
-      if (userError || !user) {
-        return {
-          success: false,
-          error: 'Authentication required',
-          code: 'AUTH_ERROR',
-        }
-      }
-
-      if (user.id !== userId) {
-        return {
-          success: false,
-          error: 'User mismatch',
-          code: 'AUTH_ERROR',
-        }
-      }
-    } else {
-      const localUser = await prisma.user.findFirst({
-        where: { id: userId, deletedAt: null },
-        select: { id: true },
-      })
-
-      if (!localUser) {
-        return {
-          success: false,
-          error: 'Пользователь не найден',
-          code: 'AUTH_ERROR',
-        }
+    if (!localUser) {
+      return {
+        success: false,
+        error: 'Пользователь не найден',
+        code: 'AUTH_ERROR',
       }
     }
 
@@ -405,13 +446,22 @@ export async function generateText(
     }
 
     // 7. Build enhanced prompt using prompt library
+    const brandVoiceData: Record<string, unknown> = {
+      ...(dbProfile?.brandVoice ? { profileBrandVoice: dbProfile.brandVoice } : {}),
+      ...(brand?.name ? { brandName: brand.name } : {}),
+      ...(brand?.voice ? { brandVoice: brand.voice } : {}),
+      ...(brand?.tone ? { brandTone: brand.tone } : {}),
+    }
     const enhancedPrompt = buildPrompt(
-      type,
-      prompt,
-      route.model,
-      brand,
-      platform,
-      dbProfile || undefined
+      {
+        topic: prompt,
+        platform: normalizedInput.platformLabel ?? platform ?? 'Instagram',
+        maxLength,
+        contentType,
+        toneOverride,
+        includeEmojis,
+      },
+      brandVoiceData
     )
 
     // 8. Estimate costs
@@ -444,14 +494,45 @@ export async function generateText(
     const jsonPayload = extractJsonObject(gigaResult.content)
     let generated: z.infer<typeof GeneratedJsonSchema>
     if (jsonPayload) {
-      const parsedGeneration = GeneratedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
-      if (parsedGeneration.success) {
-        generated = parsedGeneration.data
-      } else {
+      try {
+        const parsedGeneration = GeneratedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
+        if (parsedGeneration.success) {
+          generated = parsedGeneration.data
+        } else {
+          generated = parseGenerationFromText(gigaResult.content)
+        }
+      } catch {
         generated = parseGenerationFromText(gigaResult.content)
       }
     } else {
       generated = parseGenerationFromText(gigaResult.content)
+    }
+    const generatedValidation = validateGeneratedContent(generated, {
+      topic: prompt,
+      platform: normalizedInput.platformLabel ?? platform ?? 'Instagram',
+      maxLength,
+      contentType,
+      toneOverride,
+      includeEmojis,
+    })
+    if (!generatedValidation.valid) {
+      await prisma.generation.update({
+        where: { id: generation.id },
+        data: {
+          status: 'FAILED' as const,
+          error: generatedValidation.message,
+          metadata: ({
+            ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
+            failedAt: new Date(),
+            validationError: generatedValidation.message,
+          } as unknown as Prisma.InputJsonValue),
+        },
+      })
+      return {
+        success: false,
+        error: generatedValidation.message,
+        code: 'VALIDATION_ERROR',
+      }
     }
     const generatedContent = `${generated.hook}\n\n${generated.body}\n\n${generated.hashtags.join(' ')}\n\n${generated.cta}`.trim()
     const generationOutputJson = JSON.stringify({
@@ -512,35 +593,47 @@ export async function generateText(
   }
 }
 
-// Build enhanced prompt using prompt library
-function buildPrompt(
-  type: GenerationTask,
-  prompt: string,
-  model: string,
-  brand: { name?: string; voice?: string | null; tone?: string | null; forbiddenWords?: string[] } | null,
-  platform: string | undefined,
-  profile: { brandVoice?: string | null } | undefined
-): string {
-  let systemContext = ''
-
-  if (brand) {
-    systemContext += `Brand: ${brand.name}\n`
-    systemContext += `Voice: ${brand.voice || 'Professional'}\n`
-    systemContext += `Tone: ${brand.tone || 'Friendly'}\n`
-    const forbiddenWords = brand.forbiddenWords ?? []
-    if (forbiddenWords.length > 0) {
-      systemContext += `Avoid: ${forbiddenWords.join(', ')}\n`
-    }
+function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, unknown> | null): string {
+  let prompt = TEXT_PROMPT_TEMPLATE
+  const toneMap: Record<PromptBuildInput['toneOverride'], string> = {
+    brand: 'по голосу бренда',
+    humor: 'юмористичный (🎭), но без кринжа и штампов',
+    formal: 'формальный и деловой (💼), без фамильярности',
+  }
+  const contentTypeMap: Record<PromptBuildInput['contentType'], string> = {
+    post: 'классический пост',
+    story: 'сторителлинг-пост',
+    tips: 'пост-советы (список и практические пункты)',
+    announcement: 'анонс/объявление',
+  }
+  const replacements: Record<string, string> = {
+    '{{topic}}': input.topic,
+    '{{platform}}': input.platform,
+    '{{brand_voice_json}}': JSON.stringify(brandVoice ?? {}, null, 2),
+    '{{max_length_chars}}': input.maxLength.toString(),
+    '{{min_length_chars}}': Math.max(300, Math.floor(input.maxLength * 0.6)).toString(),
+    '{{include_hashtags}}': 'true',
+    '{{cta_type}}': 'оставь комментарий',
+    '{{avoid_phrases}}': '["в современном мире", "уникальный контент", "инновационный подход", "цифровая эпоха"]',
+    '{{content_type}}': contentTypeMap[input.contentType],
+    '{{tone_override}}': toneMap[input.toneOverride],
+    '{{include_emojis}}': input.includeEmojis ? 'true' : 'false',
+  }
+  for (const [key, value] of Object.entries(replacements)) {
+    prompt = prompt.replaceAll(key, value)
   }
 
-  if (profile?.brandVoice) {
-    systemContext += `Brand Voice: ${profile.brandVoice}\n`
-  }
+  return `## Critical Runtime Directives
+- Строго используй тип контента: ${contentTypeMap[input.contentType]}.
+- Строго используй тон: ${toneMap[input.toneOverride]}.
+- Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
 
-  if (platform) {
-    systemContext += `Platform: ${platform}\nOptimize for ${platform} formatting and character limits.\n`
-  }
+${prompt}
 
-  return `${systemContext}\nTask: ${type}\nPrompt: ${prompt}`
+## Runtime Overrides
+- Тип контента: ${contentTypeMap[input.contentType]}
+- Тон: ${toneMap[input.toneOverride]}
+- Эмодзи: ${input.includeEmojis ? 'разрешены, но умеренно' : 'не использовать'}
+`
 }
 

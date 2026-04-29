@@ -12,15 +12,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-function createLocalAccessToken(userId: string): string {
-  const base64Url = (value: string) =>
-    btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-
-  const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
-  const payload = base64Url(JSON.stringify({ sub: userId }));
-  return `${header}.${payload}.local`;
-}
-
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -36,19 +27,14 @@ export default function LoginPage() {
     setSuccess(false);
 
     const result = await signInWithEmail(email, password);
-
     if (!result.success) {
       setError(result.error);
       setLoading(false);
       return;
     }
-
-    const userId = result.user.id;
-    const accessToken = createLocalAccessToken(userId);
-    document.cookie = `sb-access-token=${accessToken}; path=/; max-age=${60 * 60 * 24}; samesite=lax`;
     localStorage.setItem(
       "local-auth-user",
-      JSON.stringify({ id: result.user.id, email: result.user.email ?? email })
+      JSON.stringify({ id: result.user?.id, email: result.user?.email ?? email })
     );
 
     setSuccess(true);

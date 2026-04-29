@@ -14,6 +14,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
+import { useSession } from "@/lib/auth/hooks";
+
+function parseUserIdFromStorage(): string | null {
+  if (typeof document === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem("local-auth-user");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: string };
+    return parsed.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 type DashboardData = {
   stats: {
@@ -41,29 +55,6 @@ type DashboardData = {
     note?: string;
   }>;
 };
-
-function parseUserIdFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-
-  try {
-    const rawCookie = document.cookie
-      .split("; ")
-      .find((item) => item.startsWith("sb-access-token="))
-      ?.split("=")[1];
-
-    if (!rawCookie) return null;
-
-    const token = decodeURIComponent(rawCookie);
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-
-    const payloadString = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
-    const payload = JSON.parse(payloadString) as { sub?: string };
-    return payload.sub ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function DashboardSkeleton() {
   return (
@@ -128,12 +119,16 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isGenerating, startGenerating] = useTransition();
-  const userId = useMemo(() => parseUserIdFromCookie(), []);
+  const { user, loading: sessionLoading } = useSession();
+  const userId = useMemo(() => user?.id ?? parseUserIdFromStorage(), [user]);
 
   useEffect(() => {
     let isActive = true;
 
     const loadDashboardData = async () => {
+      if (sessionLoading) {
+        return;
+      }
       if (!userId) {
         if (!isActive) return;
         setLoadError("Сессия не найдена. Войдите заново, чтобы увидеть дашборд.");
@@ -162,7 +157,7 @@ export default function DashboardPage() {
     return () => {
       isActive = false;
     };
-  }, [userId]);
+  }, [userId, sessionLoading]);
 
   const handleQuickGeneration = () => {
     if (!userId) {
