@@ -4,41 +4,49 @@ import { useEffect, useState, useContext, createContext } from 'react'
 
 type AuthContextType = {
   user: { id: string; email: string } | null
-  session: { id: string } | null
   loading: boolean
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  session: null,
   loading: true,
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
-  const [session, setSession] = useState<{ id: string } | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem('local-auth-user')
-      const parsed = raw ? (JSON.parse(raw) as { id: string; email: string }) : null
-      if (parsed?.id) {
-        setUser(parsed)
-        setSession({ id: 'local' })
-      } else {
-        setUser(null)
-        setSession(null)
+    let isMounted = true
+
+    const fetchSession = async () => {
+      try {
+        const response = await fetch('/api/auth/session', { cache: 'no-store' })
+        if (!isMounted) return
+        if (!response.ok) {
+          setUser(null)
+          return
+        }
+        const payload = (await response.json()) as { user?: { id: string; email: string } }
+        setUser(payload.user ?? null)
+      } catch {
+        if (isMounted) {
+          setUser(null)
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false)
+        }
       }
-    } catch {
-      setUser(null)
-      setSession(null)
-    } finally {
-      setLoading(false)
+    }
+
+    void fetchSession()
+    return () => {
+      isMounted = false
     }
   }, [])
 
-  return <AuthContext.Provider value={{ user, session, loading }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, loading }}>{children}</AuthContext.Provider>
 }
 
 export const useSession = () => {

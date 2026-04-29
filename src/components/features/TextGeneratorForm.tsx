@@ -61,7 +61,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [draftTitle, setDraftTitle] = useState("");
   const [copied, setCopied] = useState(false);
   const [lastRequest, setLastRequest] = useState<GenerateRequestPayload | null>(null);
-  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
 
   const form = useForm<GenerateTextInput>({
     resolver: zodResolver(GenerateTextInputSchema),
@@ -186,7 +186,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
         userId,
         currentPlatform,
         normalizedTitle,
-        uploadedImageUrl ? [uploadedImageUrl] : []
+        mediaUrls
       );
 
       if (!saved.success) {
@@ -403,7 +403,16 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 )}
               />
 
-              <ImageUploader userId={userId} value={uploadedImageUrl} onChange={setUploadedImageUrl} />
+              <ImageUploader
+                userId={userId}
+                value={mediaUrls[0] ?? null}
+                onChange={(url) =>
+                  setMediaUrls((current) => {
+                    if (!url) return [];
+                    return current.includes(url) ? current : [...current, url];
+                  })
+                }
+              />
 
               <Button type="submit" className="w-full" disabled={isGenerating}>
                 {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
