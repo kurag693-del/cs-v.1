@@ -50,6 +50,7 @@ export async function GET(request: Request) {
   const payload = (await response.json()) as {
     access_token?: string
     expires_in?: number
+    user_id?: number
     error?: string
     error_description?: string
   }
@@ -60,12 +61,13 @@ export async function GET(request: Request) {
   }
 
   const expiresAt = payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : undefined
+  const ownerScope = payload.user_id ? `owner_id:${payload.user_id}` : null
   const connected = await connectPlatformCredential({
     platform: 'VK',
     brandId,
     accessToken: payload.access_token,
     expiresAt,
-    scopes: ['wall', 'photos', 'groups', 'offline'],
+    scopes: ['wall', 'photos', 'groups', 'offline', ...(ownerScope ? [ownerScope] : [])],
   })
 
   if (!connected.success) {

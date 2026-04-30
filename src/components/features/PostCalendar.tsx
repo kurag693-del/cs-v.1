@@ -11,10 +11,10 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { addDays, format, startOfDay } from 'date-fns'
+import { addDays, addMinutes, format, startOfDay } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { type ContentStatus, type Platform } from '@prisma/client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { schedulePost } from '@/lib/posts/actions'
@@ -108,7 +108,33 @@ function toPublishTime(isoDate: string | null): string {
   if (!isoDate) return '09:00'
   const date = new Date(isoDate)
   if (Number.isNaN(date.getTime())) return '09:00'
-  return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function normalizeScheduleToFuture(isoDate: string): { iso: string; wasAdjusted: boolean } {
+  const parsed = new Date(isoDate)
+  if (Number.isNaN(parsed.getTime())) {
+    return { iso: isoDate, wasAdjusted: false }
+  }
+
+  const minAllowed = addMinutes(new Date(), 5)
+  if (parsed > minAllowed) {
+    return { iso: parsed.toISOString(), wasAdjusted: false }
+  }
+
+  minAllowed.setSeconds(0, 0)
+  return { iso: minAllowed.toISOString(), wasAdjusted: true }
+}
+
+function buildLocalScheduleIso(dayId: string, hours: number, minutes: number): string {
+  const [yearStr, monthStr, dayStr] = dayId.split('-')
+  const year = Number(yearStr)
+  const month = Number(monthStr)
+  const day = Number(dayStr)
+  const safeHours = Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 23) : 9
+  const safeMinutes = Number.isFinite(minutes) ? Math.min(Math.max(minutes, 0), 59) : 0
+  const localDate = new Date(year, month - 1, day, safeHours, safeMinutes, 0, 0)
+  return localDate.toISOString()
 }
 
 export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled }: PostCalendarProps) {
@@ -137,7 +163,6 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
   const [hoveredDayId, setHoveredDayId] = useState<string | null>(null)
   const [weekOffset, setWeekOffset] = useState(0)
   const requestCountersRef = useRef<Record<string, number>>({})
-  const [isClient, setIsClient] = useState(false)
   const [publishTimes, setPublishTimes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       sourcePosts.map((post) => {
@@ -157,10 +182,6 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
       activationConstraint: { distance: 5 },
     })
   )
-
-  useEffect(() => {
-    setIsClient(true)
-  }, [])
 
   const days = useMemo(() => {
     const start = startOfDay(addDays(new Date(), weekOffset * 7))
@@ -210,7 +231,9 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
     const [hours, minutes] = selectedPublishTime.split(':').map((part) => Number(part))
     const safeHours = Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 23) : 9
     const safeMinutes = Number.isFinite(minutes) ? Math.min(Math.max(minutes, 0), 59) : 0
-    const targetDateIso = new Date(`${targetDayId}T${String(safeHours).padStart(2, '0')}:${String(safeMinutes).padStart(2, '0')}:00.000Z`).toISOString()
+    const rawTargetDateIso = buildLocalScheduleIso(targetDayId, safeHours, safeMinutes)
+    const normalized = normalizeScheduleToFuture(rawTargetDateIso)
+    const targetDateIso = normalized.iso
     const previousPosts = posts
     const targetPost = posts.find((post) => post.id === activeId)
     if (!targetPost) return
@@ -224,6 +247,9 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
         post.id === activeId ? { ...post, scheduledAt: targetDateIso, status: 'SCHEDULED' } : post
       )
     )
+    if (normalized.wasAdjusted) {
+      setPublishTimes((current) => ({ ...current, [activeId]: toPublishTime(targetDateIso) }))
+    }
 
     const result = await schedulePost(activeId, targetDateIso)
     if (requestCountersRef.current[activeId] !== requestId) {
@@ -236,6 +262,12 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
         title: 'Пост запланирован',
         description: `Дата: ${format(new Date(targetDateIso), 'dd.MM.yyyy HH:mm')}`,
       })
+      if (normalized.wasAdjusted) {
+        toast({
+          title: 'Время скорректировано',
+          description: 'Для публикации на сегодня время автоматически сдвинуто вперед (минимум +5 минут).',
+        })
+      }
       return
     }
 
@@ -269,14 +301,17 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
     const [hours, minutes] = value.split(':').map((part) => Number(part))
     const safeHours = Number.isFinite(hours) ? Math.min(Math.max(hours, 0), 23) : 9
     const safeMinutes = Number.isFinite(minutes) ? Math.min(Math.max(minutes, 0), 59) : 0
-    const updatedIso = new Date(
-      `${scheduleDate}T${String(safeHours).padStart(2, '0')}:${String(safeMinutes).padStart(2, '0')}:00.000Z`
-    ).toISOString()
+    const rawUpdatedIso = buildLocalScheduleIso(scheduleDate, safeHours, safeMinutes)
+    const normalized = normalizeScheduleToFuture(rawUpdatedIso)
+    const updatedIso = normalized.iso
 
     const previousPosts = posts
     setPosts((currentPosts) =>
       currentPosts.map((post) => (post.id === postId ? { ...post, scheduledAt: updatedIso } : post))
     )
+    if (normalized.wasAdjusted) {
+      setPublishTimes((current) => ({ ...current, [postId]: toPublishTime(updatedIso) }))
+    }
 
     const result = await schedulePost(postId, updatedIso)
     if (requestCountersRef.current[postId] !== requestId) {
@@ -284,6 +319,12 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
     }
     if (result.success) {
       onPostScheduled?.()
+      if (normalized.wasAdjusted) {
+        toast({
+          title: 'Время скорректировано',
+          description: 'Выбрано прошедшее время. Установлено ближайшее допустимое (+5 минут).',
+        })
+      }
       return
     }
 
@@ -374,7 +415,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
             })}
           </div>
         </div>
-        {isClient
+        {typeof document !== 'undefined'
           ? createPortal(
               <DragOverlay adjustScale={false}>
                 {activePost ? (
@@ -390,7 +431,13 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
                           <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">
                             Планируется:{' '}
                             {format(
-                              new Date(`${hoveredDayId}T${publishTimes[activePost.id] ?? '09:00'}:00.000Z`),
+                              new Date(
+                                buildLocalScheduleIso(
+                                  hoveredDayId,
+                                  Number((publishTimes[activePost.id] ?? '09:00').split(':')[0]),
+                                  Number((publishTimes[activePost.id] ?? '09:00').split(':')[1])
+                                )
+                              ),
                               'dd.MM.yyyy HH:mm',
                               { locale: ru }
                             )}

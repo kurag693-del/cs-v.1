@@ -7,6 +7,7 @@ import {
   BarChart3,
   CalendarDays,
   Home,
+  Link2,
   LogOut,
   Menu,
   Moon,
@@ -29,6 +30,7 @@ const navGroups = [
       { href: "/dashboard/brands", label: "Бренды", icon: Palette },
       { href: "/dashboard/generate", label: "Генератор", icon: Sparkles },
       { href: "/dashboard/calendar", label: "Календарь", icon: CalendarDays },
+      { href: "/dashboard/integrations", label: "Интеграции", icon: Link2 },
     ],
   },
   {

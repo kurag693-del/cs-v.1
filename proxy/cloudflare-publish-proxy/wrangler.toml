@@ -1,0 +1,6 @@
+name = "cloudflare-publish-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-30"
+
+[vars]
+PUBLISH_PROXY_MODE = "production"

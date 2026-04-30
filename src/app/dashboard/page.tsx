@@ -5,16 +5,17 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CalendarDays, Loader2, Sparkles, Wand2 } from "lucide-react";
 
-import { generateText } from "@/lib/generate/actions";
-import { getDashboardData } from "@/lib/analytics/actions";
+import { getAnalyticsSummary, getDashboardData } from "@/lib/analytics/actions";
+import { useSession } from "@/lib/auth/hooks";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ContextualAiSuggestion } from "@/components/ui/contextual-ai-suggestion";
+import { generateText } from "@/lib/generate/actions";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
-import { useSession } from "@/lib/auth/hooks";
 
 function parseUserIdFromStorage(): string | null {
   if (typeof document === "undefined") return null;
@@ -54,6 +55,12 @@ type DashboardData = {
     isConnected: boolean;
     note?: string;
   }>;
+};
+
+type DashboardRecommendations = {
+  bestHour: string;
+  bestPlatform: string;
+  suggestions: string[];
 };
 
 function DashboardSkeleton() {
@@ -119,6 +126,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isGenerating, startGenerating] = useTransition();
+  const [recommendations, setRecommendations] = useState<DashboardRecommendations | null>(null);
   const { user, loading: sessionLoading } = useSession();
   const userId = useMemo(() => user?.id ?? parseUserIdFromStorage(), [user]);
 
@@ -137,7 +145,7 @@ export default function DashboardPage() {
       }
 
       setIsLoading(true);
-      const result = await getDashboardData(userId);
+      const [result, recommendationsResult] = await Promise.all([getDashboardData(userId), getAnalyticsSummary()]);
 
       if (!isActive) return;
 
@@ -147,6 +155,10 @@ export default function DashboardPage() {
       } else {
         setDashboardData(result.data);
         setLoadError(null);
+      }
+
+      if (recommendationsResult.success) {
+        setRecommendations(recommendationsResult.data.recommendations);
       }
 
       setIsLoading(false);
@@ -303,7 +315,7 @@ export default function DashboardPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <Card>
               <CardHeader>
-                <CardTitle>Upcoming Posts</CardTitle>
+                <CardTitle>Ближайшие публикации</CardTitle>
                 <CardDescription>Ближайшие 3 поста в статусе SCHEDULED.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -323,7 +335,7 @@ export default function DashboardPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Recent Activity</CardTitle>
+                <CardTitle>Последняя активность</CardTitle>
                 <CardDescription>Последние генерации контента.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -345,7 +357,7 @@ export default function DashboardPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Connected Accounts</CardTitle>
+                <CardTitle>Подключенные аккаунты</CardTitle>
                 <CardDescription>Статус подключений платформ публикации.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -353,13 +365,38 @@ export default function DashboardPage() {
                   <div key={account.platform} className="flex items-center justify-between rounded-md border p-2">
                     <span className="text-sm">{account.platform}</span>
                     <Badge variant={account.isConnected ? "default" : "secondary"}>
-                      {account.isConnected ? "Connected" : account.note ?? "Not connected"}
+                      {account.isConnected ? "Подключено" : account.note ?? "Не подключено"}
                     </Badge>
                   </div>
                 ))}
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>AI-рекомендации</CardTitle>
+              <CardDescription>
+                Лучшее время: {recommendations?.bestHour ?? "09:00"} · Приоритетная платформа:{" "}
+                {recommendations?.bestPlatform ?? "TELEGRAM"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {(recommendations?.suggestions ?? ["Наберите больше истории публикаций для персональных рекомендаций."]).map(
+                (item) => (
+                  <ContextualAiSuggestion key={item} text={item} />
+                )
+              )}
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button asChild variant="outline" size="sm">
+                  <a href="/api/analytics/export?format=csv">Экспорт CSV</a>
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <a href="/api/analytics/export?format=json">Экспорт JSON</a>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </section>
       ) : null}
     </div>

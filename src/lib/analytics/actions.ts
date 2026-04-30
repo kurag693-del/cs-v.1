@@ -2,8 +2,17 @@
 
 import { prisma } from '@/lib/db'
 import { Platform } from '@prisma/client'
+import { validateSession } from '@/lib/auth/lucia'
+import { buildRecommendations } from '@/lib/analytics/recommendations'
+import { getBestPublishingTime, getPlatformPerformance } from '@/lib/analytics/metrics'
 
-export async function getAnalyticsSummary(userId: string) {
+export async function getAnalyticsSummary(userIdParam?: string) {
+  const { user } = await validateSession()
+  const userId = userIdParam ?? user?.id
+  if (!userId) {
+    return { success: false as const, error: 'Unauthorized' }
+  }
+
   const posts = await prisma.post.findMany({
     where: {
       userId,
@@ -28,14 +37,26 @@ export async function getAnalyticsSummary(userId: string) {
     acc[key] = (acc[key] ?? 0) + 1
     return acc
   }, {})
+  const platformPerformance = getPlatformPerformance(
+    posts.map((post) => ({
+      platform: post.platform,
+      status: post.status,
+      publishedAt: post.publishedAt,
+    }))
+  )
+  const bestPublishingTime = getBestPublishingTime(
+    posts.map((post) => ({
+      platform: post.platform,
+      status: post.status,
+      publishedAt: post.publishedAt,
+    }))
+  )
 
-  const bestHour =
-    Object.entries(byHour).sort((a, b) => b[1] - a[1])[0]?.[0] ??
-    '09:00'
-
-  const bestPlatform =
-    Object.entries(byPlatform).sort((a, b) => b[1] - a[1])[0]?.[0] ??
-    'TWITTER'
+  const recommendations = buildRecommendations({
+    byHour: { ...byHour, [bestPublishingTime]: (byHour[bestPublishingTime] ?? 0) + 0 },
+    byPlatform,
+    totalPublished: published.length,
+  })
 
   return {
     success: true,
@@ -47,23 +68,21 @@ export async function getAnalyticsSummary(userId: string) {
       },
       byPlatform,
       byHour,
-      recommendations: {
-        bestHour,
-        bestPlatform,
-        note: 'Recommendation is based on historical published volume for MVP baseline.',
-      },
+      platformPerformance,
+      bestPublishingTime,
+      recommendations,
     },
   }
 }
 
-export async function getDashboardStats(userId: string): Promise<
+export async function getDashboardStats(userIdParam?: string): Promise<
   | { success: true; data: { postsCount: number; creditsUsed: number; topPlatform: string | null } }
   | { success: false; error: { message: string } }
 > {
   try {
-    const summary = await getAnalyticsSummary(userId)
+    const summary = await getAnalyticsSummary(userIdParam)
     if (!summary.success) {
-      return { success: false, error: { message: 'Не удалось загрузить аналитику' } }
+      return { success: false, error: { message: summary.error ?? 'Не удалось загрузить аналитику' } }
     }
 
     return {
@@ -109,10 +128,12 @@ type DashboardData = {
   }>
 }
 
-export async function getDashboardData(userId: string): Promise<
+export async function getDashboardData(userIdParam?: string): Promise<
   | { success: true; data: DashboardData }
   | { success: false; error: { message: string } }
 > {
+  const { user } = await validateSession()
+  const userId = userIdParam ?? user?.id
   if (!userId) {
     return {
       success: false,
@@ -207,6 +228,27 @@ export async function getDashboardData(userId: string): Promise<
       error: {
         message: error instanceof Error ? error.message : 'Не удалось загрузить данные дашборда',
       },
+    }
+  }
+}
+
+export async function getDashboardRecommendations(userIdParam?: string): Promise<
+  | { success: true; data: { bestHour: string; bestPlatform: string; suggestions: string[] } }
+  | { success: false; error: { message: string } }
+> {
+  try {
+    const summary = await getAnalyticsSummary(userIdParam)
+    if (!summary.success) {
+      return { success: false, error: { message: summary.error ?? 'Не удалось рассчитать рекомендации' } }
+    }
+    return {
+      success: true,
+      data: summary.data.recommendations,
+    }
+  } catch (error: unknown) {
+    return {
+      success: false,
+      error: { message: error instanceof Error ? error.message : 'Не удалось рассчитать рекомендации' },
     }
   }
 }

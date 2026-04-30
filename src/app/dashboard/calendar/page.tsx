@@ -39,6 +39,7 @@ export default function CalendarPage() {
   const [statusFilter, setStatusFilter] = useState<CalendarStatusFilter>('ALL')
   const [platformFilter, setPlatformFilter] = useState<CalendarPlatformFilter>('ALL')
   const [brandFilter, setBrandFilter] = useState<string>('ALL')
+  const [currentTime, setCurrentTime] = useState(() => new Date())
 
   useEffect(() => {
     if (!loading && !user) {
@@ -56,6 +57,14 @@ export default function CalendarPage() {
       fetchBrands(user.id)
     }
   }, [user, statusFilter, platformFilter, brandFilter])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(new Date())
+    }, 15000)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   const fetchPosts = async (
     userId: string,
@@ -116,7 +125,7 @@ export default function CalendarPage() {
   const scheduledCount = posts.filter((post) => post.status === 'SCHEDULED').length
   const publishedCount = posts.filter((post) => post.status === 'PUBLISHED').length
   const queuedCount = posts.filter((post) => post.status === 'SCHEDULED' || post.status === 'DRAFT').length
-  const now = new Date()
+  const now = currentTime
   const dispatchableNowCount = posts.filter((post) => {
     if (post.status !== 'SCHEDULED' || !post.scheduledAt) return false
     const scheduledAt = new Date(post.scheduledAt)
@@ -241,7 +250,9 @@ export default function CalendarPage() {
                         payload.data.failedJobs > 0
                           ? `Часть задач завершилась ошибкой (${payload.data.failedJobs}). Проверьте подключения в "Интеграции платформ".`
                           : payload.data.processed > 0
-                            ? `Обработано: ${payload.data.processed} (посты: ${payload.data.processedPosts}, jobs: ${payload.data.processedJobs})`
+                            ? payload.data.mode === 'production'
+                              ? `Обработано: ${payload.data.processed} (посты: ${payload.data.processedPosts}, jobs: ${payload.data.processedJobs})`
+                              : `Sandbox: обработано ${payload.data.processed}. Статусы обновляются, но в реальный Telegram посты не отправляются.`
                             : 'Нет задач к публикации: обрабатываются только SCHEDULED-посты с датой не позже текущего времени.',
                     })
                   } catch (error: unknown) {

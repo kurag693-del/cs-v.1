@@ -9,7 +9,7 @@ import { decryptSecret, encryptSecret } from '@/lib/security/encryption'
 type ConnectPlatformInput = {
   platform: Platform
   brandId: string
-  accessToken: string
+  accessToken?: string
   refreshToken?: string
   expiresAt?: string
   scopes?: string[]
@@ -53,8 +53,36 @@ export async function connectPlatformCredential(input: ConnectPlatformInput) {
     return { success: false as const, error: 'Brand not found' }
   }
 
-  const encryptedAccessToken = encryptSecret(input.accessToken.trim())
-  const encryptedRefreshToken = input.refreshToken ? encryptSecret(input.refreshToken.trim()) : null
+  const existingCredential = await prisma.platformCredential.findUnique({
+    where: {
+      userId_platform_brandId: {
+        userId: user.id,
+        platform: input.platform,
+        brandId: input.brandId,
+      },
+    },
+    select: {
+      accessToken: true,
+      refreshToken: true,
+    },
+  })
+
+  const nextAccessToken = input.accessToken?.trim()
+  if (!nextAccessToken && !existingCredential) {
+    return { success: false as const, error: 'Access token is required for first connection' }
+  }
+
+  const encryptedAccessToken = nextAccessToken ? encryptSecret(nextAccessToken) : (existingCredential?.accessToken ?? null)
+  if (!encryptedAccessToken) {
+    return { success: false as const, error: 'Access token is missing' }
+  }
+
+  const encryptedRefreshToken =
+    input.refreshToken === undefined
+      ? (existingCredential?.refreshToken ?? null)
+      : input.refreshToken
+        ? encryptSecret(input.refreshToken.trim())
+        : null
 
   const credential = await prisma.platformCredential.upsert({
     where: {

@@ -123,7 +123,9 @@ export function BrandForm({
                   <FormControl>
                     <Input placeholder="Например, Creative Studio" {...field} disabled={isSubmitting} />
                   </FormControl>
-                  <FormDescription>Короткое имя бренда, которое будет видно в генераторе и календаре.</FormDescription>
+                  <FormDescription>
+                    Укажите официальное или короткое имя бренда (2-100 символов). Пример: &quot;Creative Studio&quot; или &quot;FitFood Pro&quot;.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.name?.message}</FormMessage>
                 </FormItem>
               )}
@@ -137,14 +139,14 @@ export function BrandForm({
                   <FormLabel>Тон</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Опишите стиль и тон коммуникации"
+                      placeholder="Например: экспертно, спокойно, без кликбейта и агрессивных продаж"
                       className="min-h-24 w-full max-w-full resize-none overflow-hidden"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
                   <FormDescription>
-                    Укажите, как бренд должен звучать: например, &quot;экспертно, дружелюбно, без канцелярита&quot;.
+                    Опишите эмоциональную окраску текстов (2-50 символов): &quot;дружелюбно и уверенно&quot;, &quot;премиально и сдержанно&quot;.
                   </FormDescription>
                   <FormMessage>{form.formState.errors.tone?.message}</FormMessage>
                 </FormItem>
@@ -158,9 +160,11 @@ export function BrandForm({
                 <FormItem className="min-w-0 md:col-span-2">
                   <FormLabel>Голос бренда</FormLabel>
                   <FormControl>
-                    <Input placeholder="Например: экспертный, поддерживающий" {...field} disabled={isSubmitting} />
+                    <Input placeholder="Например: эксперт-наставник, на ты, без жаргона" {...field} disabled={isSubmitting} />
                   </FormControl>
-                  <FormDescription>Кратко опишите, как бренд должен звучать в коммуникации.</FormDescription>
+                  <FormDescription>
+                    Уточните манеру речи (до 100 символов): уровень формальности, обращение на &quot;ты/вы&quot;, допустимая лексика.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.voice?.message}</FormMessage>
                 </FormItem>
               )}
@@ -176,11 +180,13 @@ export function BrandForm({
                     <TagInput
                       tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Например: #FF6B6B, #1A73E8"
+                      placeholder="Например: #FF6B6B, #1A73E8, #111827"
                       className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>Добавьте до 5 цветов в формате HEX.</FormDescription>
+                  <FormDescription>
+                    До 5 цветов в формате HEX (#RRGGBB). Нажимайте Enter после каждого цвета.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.colors?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
@@ -196,11 +202,13 @@ export function BrandForm({
                     <TagInput
                       tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Например: прозрачность, забота, результат"
+                      placeholder="Например: честно, практично, пошагово"
                       className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>Добавляйте слова и фразы по одному, подтверждая Enter.</FormDescription>
+                  <FormDescription>
+                    Слова и фразы, которые модель должна использовать чаще. Пример: &quot;с пользой&quot;, &quot;на практике&quot;, &quot;прозрачно&quot;.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.vocabularyRules?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
@@ -216,11 +224,13 @@ export function BrandForm({
                     <TagInput
                       tags={field.value ?? []}
                       onChange={field.onChange}
-                      placeholder="Например: дешево, гарантировано, срочно"
+                      placeholder="Например: дешево, 100% гарантия, срочно"
                       className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>Эти слова модель будет избегать в текстах.</FormDescription>
+                  <FormDescription>
+                    Слова-триггеры, которые нельзя использовать в контенте. Это помогает держать стиль и снизить риск кликбейта.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.forbiddenWords?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
@@ -234,13 +244,15 @@ export function BrandForm({
                   <FormLabel>Шаблон структуры</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Например: Hook -> Value -> CTA"
+                      placeholder="Например: Hook -> Контекст -> Польза -> Пример -> CTA"
                       className="min-h-24 w-full max-w-full resize-none overflow-hidden"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
-                  <FormDescription>Задайте порядок блоков в тексте: вступление, польза, призыв к действию.</FormDescription>
+                  <FormDescription>
+                    Шаблон структуры поста (до 500 символов). Чем конкретнее блоки, тем стабильнее результат генерации.
+                  </FormDescription>
                   <FormMessage>{form.formState.errors.structureTemplate?.message}</FormMessage>
                 </FormItem>
               )}
@@ -254,14 +266,14 @@ export function BrandForm({
                   <FormLabel>Примеры (JSON)</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder='["Пример поста 1", "Пример поста 2"]'
+                      placeholder='["Короткий экспертный пост с CTA", "Пост-кейс с цифрами и выводом"]'
                       className="min-h-32 w-full max-w-full resize-none overflow-hidden font-mono text-sm"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
                   <FormDescription>
-                    Необязательно. Добавьте 1-3 примера удачных текстов в формате JSON-массива.
+                    Необязательно. Добавьте 1-3 эталонных текста строго JSON-массивом строк. Пример: [&quot;Текст 1&quot;, &quot;Текст 2&quot;].
                   </FormDescription>
                   <FormMessage>{form.formState.errors.examples?.message}</FormMessage>
                 </FormItem>

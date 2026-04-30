@@ -11,37 +11,22 @@
 
 ## 1) Запуск локальных сервисов
 
-Откройте терминал #1:
-
-```bash
-npm run proxy:sandbox
-```
-
-Ожидается:
-- proxy слушает `http://127.0.0.1:8787`
-- health endpoint отвечает:
-
-```bash
-curl http://127.0.0.1:8787/health
-```
-
-Ожидаемый ответ:
-`{"success":true,"status":"ok","mode":"sandbox"}`
-
-Откройте терминал #2:
+Откройте терминал:
 
 ```bash
 npm run dev
 ```
 
-## 1.1) Настройка Railway proxy для ручных тестов
+## 1.1) Настройка Cloudflare Worker proxy для ручных тестов
 
-1. Задеплойте папку `proxy/railway-publish-proxy` в Railway.
-2. В Railway задайте env:
-   - `PUBLISH_PROXY_SECRET` (должен совпадать со значением в app)
-   - `PUBLISH_PROXY_MODE=sandbox`
-3. Скопируйте Railway URL и задайте в `.env.local` приложения:
-   - `PUBLISH_PROXY_URL=https://<railway-domain>/publish`
+1. Задеплойте папку `proxy/cloudflare-publish-proxy` в Cloudflare Workers:
+   - `npm install`
+   - `npx wrangler login`
+   - `npx wrangler secret put PUBLISH_PROXY_SECRET`
+   - `npm run deploy`
+2. В Worker задайте `PUBLISH_PROXY_MODE=sandbox` (в `wrangler.toml`) для тестов.
+3. Скопируйте URL Worker и задайте в `.env.local` приложения:
+   - `PUBLISH_PROXY_URL=https://<worker>.workers.dev/publish`
 4. Оставьте приложение в sandbox:
    - `PUBLISH_MODE=sandbox`
 5. Перезапустите app сервер.
@@ -83,7 +68,7 @@ npm run dev
    - toast со счетчиками обработки,
    - статус поста меняется на `PUBLISHED`,
    - в metadata появляется sandbox external id,
-   - в логах Railway proxy есть запрос с platform/context.
+   - в логах Cloudflare Worker есть запрос с platform/context.
 
 ## 5) Ручной сценарий Retry + DLQ
 

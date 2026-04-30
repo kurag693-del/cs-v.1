@@ -2,6 +2,7 @@ import type { AIServiceConfig, AIResponse, TokenUsage } from './types'
 import { calculateCost } from './utils'
 
 export type GenerationTask =
+  | 'text'
   | 'social_post'
   | 'blog_outline'
   | 'ad_copy'
@@ -20,6 +21,7 @@ export const MODEL_CONFIGS: Record<string, { input: number; output: number; maxT
 }
 
 export const TASK_MODELS: Record<GenerationTask, { primary: string; fallback: string[]; temp: number }> = {
+  text: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.4 },
   social_post: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.7 },
   blog_outline: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'claude-3-5-sonnet'], temp: 0.5 },
   ad_copy: { primary: 'gpt-4o-mini', fallback: ['gpt-4o', 'gemini-1.5-pro'], temp: 0.6 },

@@ -20,5 +20,8 @@ export async function POST(request: Request) {
   }
 
   const result = await runPendingPublishJobs(user.id, payload.data.limit ?? 20)
-  return ok(result.data)
+  return ok({
+    ...result.data,
+    mode: process.env.PUBLISH_MODE ?? 'sandbox',
+  })
 }

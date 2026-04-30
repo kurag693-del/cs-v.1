@@ -24,9 +24,9 @@ export async function POST(request: Request) {
     scopes?: string[]
   }
 
-  if (!payload.platform || !payload.brandId || !payload.accessToken) {
+  if (!payload.platform || !payload.brandId) {
     return Response.json(
-      { success: false, error: { code: 'VALIDATION_ERROR', message: 'platform, brandId, accessToken are required' } },
+      { success: false, error: { code: 'VALIDATION_ERROR', message: 'platform and brandId are required' } },
       { status: 400 }
     )
   }

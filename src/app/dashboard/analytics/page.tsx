@@ -22,7 +22,7 @@ type AnalyticsData = {
   recommendations: {
     bestHour: string
     bestPlatform: string
-    note: string
+    suggestions: string[]
   }
 }
 
@@ -42,9 +42,15 @@ export default function AnalyticsPage() {
       return
     }
     if (user) {
-      fetch(`/api/analytics?userId=${user.id}`)
+      fetch('/api/analytics')
         .then((res) => res.json())
-        .then((result) => setData(result.data))
+        .then((result) => {
+          if (result?.success) {
+            setData(result.data)
+          } else {
+            setData(null)
+          }
+        })
         .finally(() => setLoadingData(false))
     }
   }, [loading, user, router])
@@ -60,7 +66,24 @@ export default function AnalyticsPage() {
     )
   }
 
-  if (!user || !data) return null
+  if (!user) return null
+  if (!data) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Аналитика пока недоступна</CardTitle>
+            <CardDescription>Проверьте подключение и попробуйте обновить страницу.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/dashboard">Вернуться на дашборд</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   const publishedRatio = data.totals.posts > 0 ? Math.round((data.totals.published / data.totals.posts) * 100) : 0
   const draftRatio = data.totals.posts > 0 ? Math.round((data.totals.drafts / data.totals.posts) * 100) : 0
@@ -78,27 +101,27 @@ export default function AnalyticsPage() {
           <Button asChild variant="outline" size="sm">
             <Link href="/dashboard">Назад</Link>
           </Button>
-          <Badge variant="secondary">Calm Intelligence</Badge>
+          <Badge variant="secondary">Спокойная аналитика</Badge>
         </div>
 
         <Card>
           <CardHeader className="space-y-3">
-            <CardTitle>Minimal Intelligence Dashboard</CardTitle>
+            <CardTitle>Минималистичная панель аналитики</CardTitle>
             <CardDescription>Сначала ключевые инсайты, затем действия. Без BI-перегруза.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Growth</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Рост</p>
               <p className="mt-2 text-[1.75rem] font-semibold tracking-[-0.02em]">{publishedRatio}%</p>
               <p className="text-[0.8125rem] text-muted-foreground">Доля опубликованного контента</p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Reach</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Охват</p>
               <p className="mt-2 text-[1.75rem] font-semibold tracking-[-0.02em]">{reachScore}</p>
               <p className="text-[0.8125rem] text-muted-foreground">Суммарный вклад топ-платформ</p>
             </div>
             <div className="rounded-2xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Engagement</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Вовлеченность</p>
               <p className="mt-2 text-[1.75rem] font-semibold tracking-[-0.02em]">{engagementScore}</p>
               <p className="text-[0.8125rem] text-muted-foreground">Активность в лучших временных слотах</p>
             </div>
@@ -109,7 +132,7 @@ export default function AnalyticsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Reach by Platform</CardTitle>
+            <CardTitle>Охват по платформам</CardTitle>
             <CardDescription>Чистый обзор каналов с максимальным охватом.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -133,7 +156,7 @@ export default function AnalyticsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Engagement Time Slots</CardTitle>
+            <CardTitle>Временные слоты вовлеченности</CardTitle>
             <CardDescription>Элегантный контейнер для лучших часов публикации.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -159,26 +182,26 @@ export default function AnalyticsPage() {
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Best-Performing Posts</CardTitle>
+            <CardTitle>Лучшие паттерны публикаций</CardTitle>
             <CardDescription>Топ-контент через лучшие платформы и временные окна.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="rounded-xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Top Pattern #1</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Паттерн #1</p>
               <p className="mt-1 text-[0.9375rem] font-medium">
-                {data.recommendations.bestPlatform} at {data.recommendations.bestHour}
+                {data.recommendations.bestPlatform} в {data.recommendations.bestHour}
               </p>
-              <p className="mt-1 text-[0.8125rem] text-muted-foreground">Используйте этот слот для главного weekly post.</p>
+              <p className="mt-1 text-[0.8125rem] text-muted-foreground">Используйте этот слот для главной недельной публикации.</p>
             </div>
             <div className="rounded-xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Top Pattern #2</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Паттерн #2</p>
               <p className="mt-1 text-[0.9375rem] font-medium">
-                {topPlatforms[1]?.[0] ?? 'Secondary platform'} + {topHours[1]?.[0] ?? 'next best hour'}:00
+                {topPlatforms[1]?.[0] ?? 'Вторая платформа'} + {topHours[1]?.[0] ?? 'следующий лучший час'}:00
               </p>
               <p className="mt-1 text-[0.8125rem] text-muted-foreground">Подходит для репоста и вариаций контента.</p>
             </div>
             <div className="rounded-xl border border-border bg-card p-4">
-              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Draft Pressure</p>
+              <p className="text-[0.75rem] uppercase tracking-[0.08em] text-muted-foreground">Давление черновиков</p>
               <p className="mt-1 text-[0.9375rem] font-medium">{draftRatio}% контента в черновиках</p>
               <p className="mt-1 text-[0.8125rem] text-muted-foreground">Конвертируйте 1-2 черновика в scheduled posts сегодня.</p>
             </div>
@@ -187,14 +210,14 @@ export default function AnalyticsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>AI Recommendations</CardTitle>
+            <CardTitle>AI-рекомендации</CardTitle>
             <CardDescription>Умные, короткие и actionable шаги.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="rounded-xl border border-border bg-secondary p-4">
               <p className="inline-flex items-center gap-2 text-[0.9375rem] font-medium">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Publish in high-impact slot
+                Публикация в высокоэффективный слот
               </p>
               <p className="mt-1 text-[0.875rem] text-muted-foreground">
                 Запланируйте публикацию в {data.recommendations.bestHour} для {data.recommendations.bestPlatform}.
@@ -203,16 +226,24 @@ export default function AnalyticsPage() {
             <div className="rounded-xl border border-border bg-secondary p-4">
               <p className="inline-flex items-center gap-2 text-[0.9375rem] font-medium">
                 <TrendingUp className="h-4 w-4 text-primary" />
-                Scale winning format
+                Масштабируйте успешный формат
               </p>
-              <p className="mt-1 text-[0.875rem] text-muted-foreground">{data.recommendations.note}</p>
+              <p className="mt-1 text-[0.875rem] text-muted-foreground">{data.recommendations.suggestions[0] ?? 'Соберите больше данных для точного совета.'}</p>
             </div>
             <ContextualAiSuggestion
               text={`Этот пост может лучше зайти в ${data.recommendations.bestPlatform} в ${data.recommendations.bestHour}.`}
             />
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <a href="/api/analytics/export?format=csv">Скачать CSV</a>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <a href="/api/analytics/export?format=json">Скачать JSON</a>
+              </Button>
+            </div>
             <Button className="w-full justify-between" asChild>
               <Link href="/dashboard/generate">
-                Create next high-performing post
+                Создать следующую сильную публикацию
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
