@@ -16,9 +16,10 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:publish-worker": "node scripts/smoke-publish-worker.mjs",
     "smoke:analytics-export": "node scripts/smoke-analytics-export.mjs",
+    "smoke:dzen-fallback": "node scripts/smoke-dzen-fallback.mjs",
     "proxy:sandbox": "node scripts/publish-proxy-sandbox.mjs",
     "check:publish-jobs-secret": "node scripts/test-publish-jobs-secret.mjs",
-    "ci": "npm run lint && npm run type-check && npm run build"
+    "ci": "npm run lint && npm run type-check && npm run test && npm run build"
   },
   "keywords": [],
   "author": "",

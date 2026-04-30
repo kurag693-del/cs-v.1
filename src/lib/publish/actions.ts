@@ -12,6 +12,7 @@ import { canTransitionPostStatus } from '@/lib/publish/state-machine'
 import { EnqueuePublishJobSchema, type PublishTarget } from '@/lib/validation/publish'
 import { getActiveCredentialForPublishing } from '@/lib/platform-credentials/actions'
 import { revalidatePath } from 'next/cache'
+import { getApprovalStatus } from '@/lib/approval/workflow'
 
 function resolvePublishTarget(platform: string): PublishTarget {
   if (platform === 'TELEGRAM') return 'TELEGRAM'
@@ -102,6 +103,7 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
   let processedJobs = 0
   let processedPosts = 0
   let failedJobs = 0
+  let dzenFallbackCount = 0
 
   for (const item of queueItems) {
     const post = await prisma.post.findFirst({
@@ -153,6 +155,24 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
       typeof post.metadata === 'object' && post.metadata && !Array.isArray(post.metadata)
         ? (post.metadata as Record<string, unknown>)
         : {}
+    const approvalStatus = getApprovalStatus(post.metadata)
+    if (approvalStatus !== 'APPROVED') {
+      failedJobs += 1
+      await prisma.generation.update({
+        where: { id: item.generationId },
+        data: {
+          status: 'PENDING',
+          error: 'Ожидает одобрения (APPROVED) перед публикацией',
+          metadata: {
+            postId: item.postId,
+            target: item.target,
+            queueState: 'waiting_approval',
+            approvalStatus,
+          },
+        },
+      })
+      continue
+    }
     const credential = await getActiveCredentialForPublishing({
       userId,
       brandId: post.brandId,
@@ -220,6 +240,20 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
             })
 
     if (publishResult.success) {
+      const dzenFallbackUsed = item.target === 'DZEN' && 'fallbackUsed' in publishResult && publishResult.fallbackUsed
+      const fallbackInfo =
+        dzenFallbackUsed
+          ? {
+              fallback: {
+                used: true,
+                reason: ('fallbackReason' in publishResult ? publishResult.fallbackReason : undefined) ?? 'Dzen API unavailable',
+                markdown: ('markdown' in publishResult ? publishResult.markdown : undefined) ?? '',
+                exportHint: ('exportHint' in publishResult ? publishResult.exportHint : undefined) ?? '',
+                rssHint: ('rssHint' in publishResult ? publishResult.rssHint : undefined) ?? '',
+              },
+            }
+          : {}
+
       await prisma.$transaction(async (tx) => {
         await tx.post.update({
           where: { id: post.id },
@@ -235,6 +269,7 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
                 publishedAt: new Date().toISOString(),
                 idempotencyKey: item.idempotencyKey,
               },
+              ...fallbackInfo,
             } as Prisma.InputJsonValue,
           },
         })
@@ -250,11 +285,24 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
               state: 'sent',
               sentAt: new Date().toISOString(),
               idempotencyKey: item.idempotencyKey,
+              ...(dzenFallbackUsed
+                ? {
+                    fallback: {
+                      used: true,
+                      reason:
+                        ('fallbackReason' in publishResult ? publishResult.fallbackReason : undefined) ??
+                        'Dzen API unavailable',
+                    },
+                  }
+                : {}),
             },
           },
         })
       })
 
+      if (dzenFallbackUsed) {
+        dzenFallbackCount += 1
+      }
       processedPosts += 1
       processedJobs += 1
       continue
@@ -315,6 +363,7 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
       processedPosts,
       processedJobs,
       failedJobs,
+      dzenFallbackCount,
       dueScheduledCount: dueScheduledPosts.length,
       pendingJobsCount: queueItems.length,
     },

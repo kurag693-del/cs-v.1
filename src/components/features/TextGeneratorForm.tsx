@@ -23,6 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -49,6 +50,11 @@ type GenerateRequestPayload = {
   contentType: GenerateTextInput["contentType"];
   toneOverride: GenerateTextInput["toneOverride"];
   includeEmojis: boolean;
+  enableAbTest: boolean;
+  variantsCount: 1 | 2 | 3;
+  autoHashtags: boolean;
+  enableRecycle: boolean;
+  recycleTargets: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen">;
 };
 
 export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
@@ -63,6 +69,16 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [copied, setCopied] = useState(false);
   const [lastRequest, setLastRequest] = useState<GenerateRequestPayload | null>(null);
   const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const [variants, setVariants] = useState<Array<{ id: "A" | "B" | "C"; label: string; content: string }>>([]);
+  const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
+  const [recycledPosts, setRecycledPosts] = useState<Array<{ platform: "Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen"; content: string }>>([]);
+  const recycleTargetOptions: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen"> = [
+    "Instagram",
+    "Telegram",
+    "VK",
+    "TikTok",
+    "Dzen",
+  ];
 
   const form = useForm<GenerateTextInput>({
     resolver: zodResolver(GenerateTextInputSchema),
@@ -75,6 +91,11 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       contentType: "post",
       toneOverride: "brand",
       includeEmojis: true,
+      enableAbTest: false,
+      variantsCount: 2,
+      autoHashtags: true,
+      enableRecycle: false,
+      recycleTargets: [],
     },
   });
 
@@ -83,6 +104,9 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     setError(null);
     setResult(null);
     setGenerationId(null);
+    setVariants([]);
+    setGeneratedHashtags([]);
+    setRecycledPosts([]);
     setLastRequest(payload);
 
     try {
@@ -105,6 +129,9 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       }
 
       setResult(response.data.content);
+      setVariants(response.data.variants ?? []);
+      setGeneratedHashtags(response.data.hashtags ?? []);
+      setRecycledPosts(response.data.recycledPosts ?? []);
       setGenerationId(response.data.generationId);
       setDraftTitle((current) => current || payload.topic.slice(0, 120));
       toast({
@@ -137,6 +164,11 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       contentType: values.contentType ?? "post",
       toneOverride: values.toneOverride ?? "brand",
       includeEmojis: values.includeEmojis ?? true,
+      enableAbTest: values.enableAbTest ?? false,
+      variantsCount: values.variantsCount ?? 2,
+      autoHashtags: values.autoHashtags ?? true,
+      enableRecycle: values.enableRecycle ?? false,
+      recycleTargets: values.recycleTargets ?? [],
     });
   };
 
@@ -432,6 +464,123 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 )}
               />
 
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="enableAbTest"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="space-y-0.5">
+                        <FormLabel>A/B варианты</FormLabel>
+                        <FormDescription>Создает несколько формулировок на одну тему.</FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="autoHashtags"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="space-y-0.5">
+                        <FormLabel>Авто-хештеги</FormLabel>
+                        <FormDescription>Добавляет рекомендованные хештеги под платформу.</FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="variantsCount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Количество вариантов</FormLabel>
+                    <Select
+                      value={String(field.value)}
+                      onValueChange={(value) => field.onChange(Number(value) as 1 | 2 | 3)}
+                      disabled={isGenerating || !form.watch("enableAbTest")}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="1">1 (без A/B)</SelectItem>
+                        <SelectItem value="2">2 (A/B)</SelectItem>
+                        <SelectItem value="3">3 (A/B/C)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>Рекомендуется 2 для быстрого сравнения.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="enableRecycle"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="space-y-0.5">
+                      <FormLabel>Ресайклинг 1→N платформ</FormLabel>
+                      <FormDescription>Сделает адаптированные версии под выбранные каналы.</FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="recycleTargets"
+                render={({ field }) => {
+                  const selectedTargets = field.value ?? [];
+                  const recycleEnabled = form.watch("enableRecycle");
+                  return (
+                    <FormItem>
+                      <FormLabel>Целевые платформы ресайклинга</FormLabel>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {recycleTargetOptions.map((target) => {
+                          const checked = selectedTargets.includes(target);
+                          return (
+                            <label
+                              key={target}
+                              className="flex items-center gap-2 rounded-md border p-2 text-sm"
+                            >
+                              <Checkbox
+                                checked={checked}
+                                disabled={isGenerating || !recycleEnabled}
+                                onCheckedChange={(nextChecked) => {
+                                  const nextTargets = nextChecked
+                                    ? [...selectedTargets, target]
+                                    : selectedTargets.filter((item) => item !== target);
+                                  field.onChange(nextTargets);
+                                }}
+                              />
+                              {target}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <FormDescription>Выберите минимум 1 платформу, если ресайклинг включен.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
+
               <ImageUploader
                 userId={userId}
                 value={mediaUrls}
@@ -497,6 +646,46 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   />
                 </div>
                 <p className="whitespace-pre-wrap text-sm">{result}</p>
+                {variants.length > 1 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">A/B варианты</p>
+                    <div className="flex flex-wrap gap-2">
+                      {variants.map((variant) => (
+                        <Button
+                          key={variant.id}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setResult(variant.content);
+                            setDraftTitle((current) => current || `${variant.label}: ${form.getValues("topic").slice(0, 90)}`);
+                          }}
+                        >
+                          {variant.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {generatedHashtags.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Рекомендованные хештеги</p>
+                    <p className="text-sm text-muted-foreground">{generatedHashtags.join(" ")}</p>
+                  </div>
+                ) : null}
+                {recycledPosts.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Ресайклинг 1→N</p>
+                    <div className="space-y-2">
+                      {recycledPosts.map((item) => (
+                        <div key={item.platform} className="rounded-md border p-2">
+                          <p className="text-xs font-medium text-muted-foreground">{item.platform}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-sm">{item.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={handleCopy}>
                     {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}

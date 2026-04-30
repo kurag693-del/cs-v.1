@@ -7,6 +7,7 @@ import { AlertCircle, CalendarDays, Loader2, Sparkles, Wand2 } from "lucide-reac
 
 import { getAnalyticsSummary, getDashboardData } from "@/lib/analytics/actions";
 import { useSession } from "@/lib/auth/hooks";
+import { getOnboardingProgress } from "@/lib/onboarding/actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,12 @@ type DashboardRecommendations = {
   bestHour: string;
   bestPlatform: string;
   suggestions: string[];
+};
+
+type OnboardingBannerState = {
+  completedSteps: number;
+  totalSteps: number;
+  isCompleted: boolean;
 };
 
 function DashboardSkeleton() {
@@ -127,6 +134,7 @@ export default function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isGenerating, startGenerating] = useTransition();
   const [recommendations, setRecommendations] = useState<DashboardRecommendations | null>(null);
+  const [onboardingState, setOnboardingState] = useState<OnboardingBannerState | null>(null);
   const { user, loading: sessionLoading } = useSession();
   const userId = useMemo(() => user?.id ?? parseUserIdFromStorage(), [user]);
 
@@ -145,7 +153,11 @@ export default function DashboardPage() {
       }
 
       setIsLoading(true);
-      const [result, recommendationsResult] = await Promise.all([getDashboardData(userId), getAnalyticsSummary()]);
+      const [result, recommendationsResult, onboardingResult] = await Promise.all([
+        getDashboardData(userId),
+        getAnalyticsSummary(),
+        getOnboardingProgress(userId),
+      ]);
 
       if (!isActive) return;
 
@@ -159,6 +171,13 @@ export default function DashboardPage() {
 
       if (recommendationsResult.success) {
         setRecommendations(recommendationsResult.data.recommendations);
+      }
+      if (onboardingResult.success) {
+        setOnboardingState({
+          completedSteps: onboardingResult.data.completedSteps,
+          totalSteps: onboardingResult.data.totalSteps,
+          isCompleted: onboardingResult.data.isCompleted,
+        });
       }
 
       setIsLoading(false);
@@ -286,6 +305,21 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </section>
+
+      {onboardingState && !onboardingState.isCompleted ? (
+        <Alert>
+          <Sparkles className="h-4 w-4" />
+          <AlertTitle>Онбординг не завершен</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Выполнено {onboardingState.completedSteps}/{onboardingState.totalSteps}. Завершите шаги, чтобы быстрее выйти на стабильные публикации.
+            </span>
+            <Button asChild size="sm" variant="outline">
+              <Link href="/onboarding">Открыть онбординг</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {isLoading ? (
         <DashboardSkeleton />

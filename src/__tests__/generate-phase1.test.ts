@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildPrompt, parseGenerationFromText } from '@/lib/generate/prompt-utils'
 import { normalizeGeneratedContent, validateGeneratedContent } from '@/lib/validation/generation-output'
+import { AI_PROVIDER_IDS } from '@/lib/ai/providers/registry'
 
 describe('phase 1 generation hardening', () => {
   it('buildPrompt fully replaces {{variable}} placeholders', () => {
@@ -22,6 +23,10 @@ describe('phase 1 generation hardening', () => {
     expect(prompt).not.toMatch(/\{\{[a-z0-9_]+\}\}/i)
     expect(prompt).toContain('Telegram')
     expect(prompt).toContain('Creative Studio')
+  })
+
+  it('keeps provider registry with required ids', () => {
+    expect(AI_PROVIDER_IDS).toEqual(expect.arrayContaining(['gigachat', 'yandexgpt', 'vkai']))
   })
 
   it('fails validation for forbidden template phrases', () => {

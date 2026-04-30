@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 
 type Platform = "Instagram" | "Telegram" | "VK" | "TikTok";
+type Provider = "gigachat" | "yandexgpt" | "vkai";
 
 type TextGeneratorProps = {
   userId: string;
@@ -54,6 +55,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
   const { toast } = useToast();
   const [topic, setTopic] = useState("");
   const [platform, setPlatform] = useState<Platform>("Instagram");
+  const [provider, setProvider] = useState<Provider>("gigachat");
   const [brandId, setBrandId] = useState<string>("none");
   const [maxLength, setMaxLength] = useState<number[]>([600]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -74,7 +76,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
       {
         topic: topic.trim(),
         platform,
-        provider: "gigachat",
+        provider,
         brandId: brandId === "none" ? undefined : brandId,
         maxLength: maxLength[0],
       }
@@ -189,6 +191,20 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">ИИ-провайдер</p>
+            <Select value={provider} onValueChange={(value) => setProvider(value as Provider)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="gigachat">GigaChat (рекомендуется)</SelectItem>
+                <SelectItem value="yandexgpt">YandexGPT (beta)</SelectItem>
+                <SelectItem value="vkai">VK AI (beta)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-3">

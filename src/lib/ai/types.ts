@@ -90,6 +90,9 @@ export interface GenerationResult {
   data?: {
     generationId: string
     content: string
+    variants?: Array<{ id: 'A' | 'B' | 'C'; label: string; content: string }>
+    hashtags?: string[]
+    recycledPosts?: Array<{ platform: 'Instagram' | 'Telegram' | 'VK' | 'TikTok' | 'Dzen'; content: string }>
     model: string
     provider: AIProviderId
     tokens: TokenUsage

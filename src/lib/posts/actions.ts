@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { MediaUrlsSchema } from '@/lib/validation/media'
 import { canTransitionPostStatus } from '@/lib/publish/state-machine'
 import { validateSession } from '@/lib/auth/lucia'
+import { getApprovalStatus } from '@/lib/approval/workflow'
 
 const SaveGenerationAsDraftSchema = z.object({
   generationId: z.string().min(1, 'generationId обязателен'),
@@ -561,6 +562,10 @@ export async function schedulePost(
       scheduledAt: parsed.data.scheduledAt,
     })
     if (!transition.valid) return { success: false, error: transition.message }
+    const approvalStatus = getApprovalStatus(post.metadata)
+    if (approvalStatus !== 'APPROVED') {
+      return { success: false, error: 'Пост нельзя запланировать без одобрения. Переведите в APPROVED.' }
+    }
 
     const nextScheduledAt = parsed.data.scheduledAt
     const sameSchedule =

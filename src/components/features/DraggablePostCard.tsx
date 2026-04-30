@@ -7,6 +7,7 @@ import { type CSSProperties } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { getApprovalStatus } from '@/lib/approval/workflow'
 
 type DraggablePost = {
   id: string
@@ -14,6 +15,7 @@ type DraggablePost = {
   content?: string
   platform: Platform | string
   status: ContentStatus | string
+  metadata?: unknown
 }
 
 type DraggablePostCardProps = {
@@ -39,15 +41,36 @@ export function DraggablePostCard({
     cursor: isDragging ? 'grabbing' : 'grab',
   }
 
+  const hasDzenFallback = (() => {
+    if (post.platform !== 'DZEN') return false
+    if (!post.metadata || typeof post.metadata !== 'object' || Array.isArray(post.metadata)) return false
+    const fallback = (post.metadata as Record<string, unknown>).fallback
+    if (!fallback || typeof fallback !== 'object' || Array.isArray(fallback)) return false
+    return (fallback as Record<string, unknown>).used === true
+  })()
+  const approvalStatus = getApprovalStatus(post.metadata)
+
   return (
     <div ref={setNodeRef} style={style} className="relative z-10" {...listeners} {...attributes}>
       <Card className="border-border">
         <CardContent className="space-y-2 p-3">
           <div className="flex items-center justify-between gap-2">
             <Badge variant="outline">{post.platform}</Badge>
-            <Badge>{post.status}</Badge>
+            <div className="flex items-center gap-1.5">
+              <Badge>{post.status}</Badge>
+              {hasDzenFallback ? (
+                <Badge variant="secondary" className="text-[0.6875rem]">
+                  Dzen fallback
+                </Badge>
+              ) : null}
+            </div>
           </div>
           <p className="line-clamp-2 text-sm font-medium">{post.title}</p>
+          <div className="flex items-center gap-1.5">
+            <Badge variant="secondary" className="text-[0.6875rem]">
+              Approval: {approvalStatus}
+            </Badge>
+          </div>
           <p className="line-clamp-1 text-xs text-muted-foreground">
             {post.content?.trim() || 'Содержимое поста недоступно'}
           </p>

@@ -10,15 +10,18 @@ import { useToast } from '@/components/ui/use-toast'
 import { getCalendarPostsWithFilters } from '@/lib/posts/actions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CalendarRange, Clock3, GripVertical, ListFilter, Send } from 'lucide-react'
+import { CalendarRange, Clock3, Download, GripVertical, ListFilter, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getBrands } from '@/lib/brands/actions'
 import { type ContentStatus, type Platform } from '@prisma/client'
+import { getApprovalStatus } from '@/lib/approval/workflow'
+import { approvePost, rejectPost, requestPostApproval } from '@/lib/approval/actions'
 
 type ViewMode = 'week' | 'list'
 type CalendarStatusFilter = ContentStatus | 'ALL'
 type CalendarPlatformFilter = Platform | 'ALL'
+type CalendarApprovalFilter = 'ALL' | 'DRAFT' | 'REVIEW_PENDING' | 'APPROVED' | 'REJECTED'
 type BrandLite = { id: string; name: string }
 
 const viewModes: Array<{ id: ViewMode; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -39,6 +42,7 @@ export default function CalendarPage() {
   const [statusFilter, setStatusFilter] = useState<CalendarStatusFilter>('ALL')
   const [platformFilter, setPlatformFilter] = useState<CalendarPlatformFilter>('ALL')
   const [brandFilter, setBrandFilter] = useState<string>('ALL')
+  const [approvalFilter, setApprovalFilter] = useState<CalendarApprovalFilter>('ALL')
   const [currentTime, setCurrentTime] = useState(() => new Date())
 
   useEffect(() => {
@@ -122,11 +126,15 @@ export default function CalendarPage() {
     return null
   }
 
-  const scheduledCount = posts.filter((post) => post.status === 'SCHEDULED').length
-  const publishedCount = posts.filter((post) => post.status === 'PUBLISHED').length
-  const queuedCount = posts.filter((post) => post.status === 'SCHEDULED' || post.status === 'DRAFT').length
+  const filteredPosts =
+    approvalFilter === 'ALL'
+      ? posts
+      : posts.filter((post) => getApprovalStatus((post as Record<string, unknown>).metadata) === approvalFilter)
+  const scheduledCount = filteredPosts.filter((post) => post.status === 'SCHEDULED').length
+  const publishedCount = filteredPosts.filter((post) => post.status === 'PUBLISHED').length
+  const queuedCount = filteredPosts.filter((post) => post.status === 'SCHEDULED' || post.status === 'DRAFT').length
   const now = currentTime
-  const dispatchableNowCount = posts.filter((post) => {
+  const dispatchableNowCount = filteredPosts.filter((post) => {
     if (post.status !== 'SCHEDULED' || !post.scheduledAt) return false
     const scheduledAt = new Date(post.scheduledAt)
     return !Number.isNaN(scheduledAt.getTime()) && scheduledAt <= now
@@ -150,6 +158,53 @@ export default function CalendarPage() {
       }
     }
     return 'Без заголовка'
+  }
+
+  const extractDzenFallbackMarkdown = (post: Record<string, unknown>): string | null => {
+    const metadata = post.metadata
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+
+    const fallback = (metadata as Record<string, unknown>).fallback
+    if (!fallback || typeof fallback !== 'object' || Array.isArray(fallback)) return null
+
+    const markdown = (fallback as Record<string, unknown>).markdown
+    return typeof markdown === 'string' && markdown.trim().length > 0 ? markdown : null
+  }
+
+  const hasDzenFallback = (post: Record<string, unknown>): boolean => {
+    const metadata = post.metadata
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+    const fallback = (metadata as Record<string, unknown>).fallback
+    if (!fallback || typeof fallback !== 'object' || Array.isArray(fallback)) return false
+    return (fallback as Record<string, unknown>).used === true
+  }
+
+  const downloadDzenMarkdown = (post: Record<string, unknown>) => {
+    const markdown = extractDzenFallbackMarkdown(post)
+    if (!markdown) {
+      toast({
+        title: 'Markdown недоступен',
+        description: 'Для этой публикации fallback-черновик не найден.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `dzen-export-${String(post.id ?? Date.now())}.md`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+  const getApprovalBadgeClass = (status: string): string => {
+    if (status === 'APPROVED') return 'bg-green-100 text-green-700'
+    if (status === 'REVIEW_PENDING') return 'bg-amber-100 text-amber-700'
+    if (status === 'REJECTED') return 'bg-red-100 text-red-700'
+    return 'bg-secondary text-secondary-foreground'
   }
 
   return (
@@ -247,7 +302,9 @@ export default function CalendarPage() {
                     toast({
                       title: 'Очередь обработана',
                       description:
-                        payload.data.failedJobs > 0
+                        payload.data.dzenFallbackCount > 0
+                          ? `Для ${payload.data.dzenFallbackCount} задач Дзена сработал fallback: Markdown + "Экспорт в Дзен" + RSS-импорт.`
+                          : payload.data.failedJobs > 0
                           ? `Часть задач завершилась ошибкой (${payload.data.failedJobs}). Проверьте подключения в "Интеграции платформ".`
                           : payload.data.processed > 0
                             ? payload.data.mode === 'production'
@@ -275,7 +332,7 @@ export default function CalendarPage() {
               </Button>
             </div>
 
-            <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-3">
+            <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-4">
             <Select value={platformFilter} onValueChange={(value) => setPlatformFilter(value as CalendarPlatformFilter)}>
               <SelectTrigger className="h-9 w-full xl:w-[180px]">
                 <SelectValue placeholder="Платформа" />
@@ -319,6 +376,18 @@ export default function CalendarPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={approvalFilter} onValueChange={(value) => setApprovalFilter(value as CalendarApprovalFilter)}>
+              <SelectTrigger className="h-9 w-full xl:w-[220px]">
+                <SelectValue placeholder="Approval" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Approval: все</SelectItem>
+                <SelectItem value="DRAFT">Approval: DRAFT</SelectItem>
+                <SelectItem value="REVIEW_PENDING">Approval: REVIEW_PENDING</SelectItem>
+                <SelectItem value="APPROVED">Approval: APPROVED</SelectItem>
+                <SelectItem value="REJECTED">Approval: REJECTED</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           </div>
         </CardContent>
@@ -339,7 +408,7 @@ export default function CalendarPage() {
           </CardHeader>
           <CardContent className="p-0">
             <PostCalendar
-              posts={posts}
+              posts={filteredPosts}
               onPostScheduled={() =>
                 fetchPosts(user.id, {
                   status: statusFilter,
@@ -365,10 +434,10 @@ export default function CalendarPage() {
             <CardDescription>Очередь контента с платформой, статусом публикации и авто-публикацией.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2.5">
-            {posts.length === 0 ? (
+            {filteredPosts.length === 0 ? (
               <p className="text-[0.9375rem] text-muted-foreground">Постов в календаре пока нет.</p>
             ) : (
-              posts.map((post) => (
+              filteredPosts.map((post) => (
                 <div key={post.id} className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-start gap-3">
                     <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -384,10 +453,92 @@ export default function CalendarPage() {
                     <Badge className={cn(statusClassMap[post.status] ?? 'bg-secondary text-secondary-foreground')}>
                       {post.status ?? 'DRAFT'}
                     </Badge>
+                    <Badge className={cn('text-[0.6875rem]', getApprovalBadgeClass(getApprovalStatus((post as Record<string, unknown>).metadata)))}>
+                      Approval: {getApprovalStatus((post as Record<string, unknown>).metadata)}
+                    </Badge>
+                    {hasDzenFallback(post as Record<string, unknown>) ? (
+                      <Badge variant="secondary" className="text-[0.6875rem]">
+                        Dzen fallback
+                      </Badge>
+                    ) : null}
                     <span className="inline-flex items-center gap-1 rounded-lg bg-secondary px-2 py-1 text-[0.75rem] text-muted-foreground">
                       <Clock3 className="h-3 w-3" />
                       {post.autoPublish ? 'Автопубликация включена' : 'Ручная публикация'}
                     </span>
+                    {post.platform === 'DZEN' && extractDzenFallbackMarkdown(post as Record<string, unknown>) ? (
+                      <Button variant="outline" size="sm" onClick={() => downloadDzenMarkdown(post as Record<string, unknown>)}>
+                        <Download className="h-3.5 w-3.5" />
+                        Экспорт в Дзен
+                      </Button>
+                    ) : null}
+                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'DRAFT' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const res = await requestPostApproval(String(post.id))
+                          if (!res.success) {
+                            toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
+                            return
+                          }
+                          await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
+                          toast({ title: 'На согласовании', description: 'Пост отправлен на approval' })
+                        }}
+                      >
+                        На согласование
+                      </Button>
+                    ) : null}
+                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'REVIEW_PENDING' ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            const res = await approvePost(String(post.id))
+                            if (!res.success) {
+                              toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
+                              return
+                            }
+                            await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
+                            toast({ title: 'Одобрено', description: 'Пост можно планировать и публиковать' })
+                          }}
+                        >
+                          Одобрить
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            const res = await rejectPost(String(post.id), 'Отклонено вручную')
+                            if (!res.success) {
+                              toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
+                              return
+                            }
+                            await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
+                            toast({ title: 'Отклонено', description: 'Пост возвращен в доработку' })
+                          }}
+                        >
+                          Отклонить
+                        </Button>
+                      </>
+                    ) : null}
+                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'REJECTED' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const res = await requestPostApproval(String(post.id))
+                          if (!res.success) {
+                            toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
+                            return
+                          }
+                          await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
+                          toast({ title: 'Повторное согласование', description: 'Пост снова отправлен на approval' })
+                        }}
+                      >
+                        Повторно на согласование
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               ))

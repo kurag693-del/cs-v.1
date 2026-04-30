@@ -11,6 +11,19 @@ export type PromptBuildInput = {
 }
 
 type ParsedGenerated = { hook: string; body: string; hashtags: string[]; cta: string }
+const REQUIRED_PLACEHOLDERS = [
+  'topic',
+  'platform',
+  'brand_voice_json',
+  'max_length_chars',
+  'min_length_chars',
+  'include_hashtags',
+  'cta_type',
+  'avoid_phrases',
+  'content_type',
+  'tone_override',
+  'include_emojis',
+] as const
 
 function sanitizeHashtags(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -171,6 +184,12 @@ export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, 
     include_emojis: input.includeEmojis ? 'true' : 'false',
   }
 
+  for (const placeholder of REQUIRED_PLACEHOLDERS) {
+    if (!prompt.includes(`{{${placeholder}}}`)) {
+      throw new Error(`В шаблоне отсутствует обязательный плейсхолдер: {{${placeholder}}}`)
+    }
+  }
+
   prompt = prompt.replace(/\{\{([a-z0-9_]+)\}\}/gi, (match, variableName: string) => {
     const replacement = replacements[variableName]
     if (replacement === undefined) {
@@ -178,6 +197,10 @@ export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, 
     }
     return replacement
   })
+
+  if (/\{\{[a-z0-9_]+\}\}/i.test(prompt)) {
+    throw new Error('Шаблон содержит незамененные плейсхолдеры')
+  }
 
   return `## Critical Runtime Directives
 - Строго используй тип контента: ${contentTypeMap[input.contentType]}.

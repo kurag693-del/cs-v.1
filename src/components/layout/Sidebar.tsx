@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import {
   BarChart3,
   CalendarDays,
+  Compass,
   Home,
   Link2,
   LogOut,
@@ -31,6 +32,7 @@ const navGroups = [
       { href: "/dashboard/generate", label: "Генератор", icon: Sparkles },
       { href: "/dashboard/calendar", label: "Календарь", icon: CalendarDays },
       { href: "/dashboard/integrations", label: "Интеграции", icon: Link2 },
+      { href: "/onboarding", label: "Онбординг", icon: Compass },
     ],
   },
   {

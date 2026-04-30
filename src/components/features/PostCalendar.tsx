@@ -29,6 +29,7 @@ type CalendarPost = {
   id: string
   title: string
   content?: string
+  metadata?: unknown
   platform: Platform | string
   status: ContentStatus | string
   scheduledAt: string | null

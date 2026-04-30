@@ -5,6 +5,7 @@ import { AlertCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { normalizeObservabilityError } from "@/lib/observability/cost-log";
 
 type GlobalErrorProps = {
   error: Error & { digest?: string };
@@ -13,8 +14,8 @@ type GlobalErrorProps = {
 
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
   useEffect(() => {
-    // Заглушка под интеграцию с Sentry/логгером.
-    console.error("Application error:", error);
+    const normalized = normalizeObservabilityError(error);
+    console.error("Application error:", normalized);
   }, [error]);
 
   return (

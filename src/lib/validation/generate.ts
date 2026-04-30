@@ -9,6 +9,11 @@ export const generateTextInputSchema = z.object({
   contentType: z.enum(['post', 'story', 'tips', 'announcement']).default('post'),
   toneOverride: z.enum(['brand', 'humor', 'formal']).default('brand'),
   includeEmojis: z.boolean().default(true),
+  enableAbTest: z.boolean().default(false),
+  variantsCount: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(2),
+  autoHashtags: z.boolean().default(true),
+  enableRecycle: z.boolean().default(false),
+  recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
 })
 
 export type GenerateTextInput = z.input<typeof generateTextInputSchema>

@@ -13,6 +13,10 @@ import { moderator } from '@/lib/ai/moderation'
 import { calculateCost, trackTokenUsage } from '@/lib/ai/utils'
 import { generatedJsonSchema, normalizeGeneratedContent, validateGeneratedContent } from '@/lib/validation/generation-output'
 import { validateSession } from '@/lib/auth/lucia'
+import { createCorrelationId, logAiCost } from '@/lib/observability/cost-log'
+import { buildAbVariants } from '@/lib/ai/workflows/ab-variants'
+import { generateAutoHashtags } from '@/lib/ai/workflows/hashtags'
+import { recycleContentForPlatforms, type RecycleTarget } from '@/lib/ai/workflows/recycle'
 
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
@@ -25,6 +29,11 @@ const GenerateInputSchema = z.object({
   contentType: z.enum(['post', 'story', 'tips', 'announcement']).default('post'),
   toneOverride: z.enum(['brand', 'humor', 'formal']).default('brand'),
   includeEmojis: z.boolean().default(true),
+  enableAbTest: z.boolean().default(false),
+  variantsCount: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(2),
+  autoHashtags: z.boolean().default(true),
+  enableRecycle: z.boolean().default(false),
+  recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -41,6 +50,11 @@ type GenerateTextPayload =
       contentType?: 'post' | 'story' | 'tips' | 'announcement'
       toneOverride?: 'brand' | 'humor' | 'formal'
       includeEmojis?: boolean
+      enableAbTest?: boolean
+      variantsCount?: 1 | 2 | 3
+      autoHashtags?: boolean
+      enableRecycle?: boolean
+      recycleTargets?: Array<'Instagram' | 'Telegram' | 'VK' | 'TikTok' | 'Dzen'>
       type?: string
       metadata?: Record<string, unknown>
     }
@@ -59,6 +73,22 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       contentType: (payload.get('contentType')?.toString() as PromptBuildInput['contentType'] | undefined) ?? 'post',
       toneOverride: (payload.get('toneOverride')?.toString() as PromptBuildInput['toneOverride'] | undefined) ?? 'brand',
       includeEmojis: payload.get('includeEmojis')?.toString() !== 'false',
+      enableAbTest: payload.get('enableAbTest')?.toString() === 'true',
+      variantsCount: Number(payload.get('variantsCount') ?? 2),
+      autoHashtags: payload.get('autoHashtags')?.toString() !== 'false',
+      enableRecycle: payload.get('enableRecycle')?.toString() === 'true',
+      recycleTargets: (() => {
+        const targets = payload.getAll('recycleTargets').map((value) => String(value))
+        if (targets.length > 0) return targets
+        const raw = payload.get('recycleTargets')
+        if (typeof raw !== 'string' || raw.length === 0) return []
+        try {
+          const parsed = JSON.parse(raw) as unknown
+          return Array.isArray(parsed) ? parsed : []
+        } catch {
+          return []
+        }
+      })(),
       platformLabel: payload.get('platform')?.toString() ?? 'Instagram',
       metadata: typeof metadataRaw === 'string' && metadataRaw.length > 0 ? (JSON.parse(metadataRaw) as Record<string, unknown>) : undefined,
     }
@@ -86,6 +116,11 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     contentType: payload.contentType ?? 'post',
     toneOverride: payload.toneOverride ?? 'brand',
     includeEmojis: payload.includeEmojis ?? true,
+    enableAbTest: payload.enableAbTest ?? false,
+    variantsCount: payload.variantsCount ?? 2,
+    autoHashtags: payload.autoHashtags ?? true,
+    enableRecycle: payload.enableRecycle ?? false,
+    recycleTargets: payload.recycleTargets ?? [],
     platformLabel: payload.platform ?? 'Instagram',
     metadata: payload.metadata,
   }
@@ -107,6 +142,7 @@ function extractBrandMetadataArray(metadata: Prisma.JsonValue | null | undefined
 
 export async function generateText(payload: GenerateTextPayload): Promise<GenerationResult> {
   try {
+    const correlationId = createCorrelationId('gen')
     const { user } = await validateSession()
     const userId = user?.id ?? null
     if (!userId) {
@@ -125,6 +161,11 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       contentType: normalizedInput.contentType,
       toneOverride: normalizedInput.toneOverride,
       includeEmojis: normalizedInput.includeEmojis,
+      enableAbTest: normalizedInput.enableAbTest,
+      variantsCount: normalizedInput.variantsCount,
+      autoHashtags: normalizedInput.autoHashtags,
+      enableRecycle: normalizedInput.enableRecycle,
+      recycleTargets: normalizedInput.recycleTargets,
       metadata: normalizedInput.metadata,
     })
 
@@ -136,7 +177,24 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       }
     }
 
-    const { type, prompt, platform, provider, brandId, profileId, maxLength, contentType, toneOverride, includeEmojis, metadata } = validated.data
+    const {
+      type,
+      prompt,
+      platform,
+      provider,
+      brandId,
+      profileId,
+      maxLength,
+      contentType,
+      toneOverride,
+      includeEmojis,
+      enableAbTest,
+      variantsCount,
+      autoHashtags,
+      enableRecycle,
+      recycleTargets,
+      metadata,
+    } = validated.data
 
     const localUser = await prisma.user.findFirst({ where: { id: userId, deletedAt: null }, select: { id: true } })
     if (!localUser) {
@@ -280,6 +338,9 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
     }
 
     const generatedContent = `${normalizedGenerated.hook}\n\n${normalizedGenerated.body}\n\n${normalizedGenerated.hashtags.join(' ')}\n\n${normalizedGenerated.cta}`.trim()
+    const variants = enableAbTest ? buildAbVariants(generatedContent, variantsCount) : buildAbVariants(generatedContent, 1)
+    const hashtags = autoHashtags ? generateAutoHashtags(generatedContent, normalizedInput.platformLabel ?? platform ?? 'instagram') : []
+    const recycledPosts = enableRecycle ? recycleContentForPlatforms(generatedContent, recycleTargets as RecycleTarget[]) : []
     const generationOutputJson = JSON.stringify({
       hook: normalizedGenerated.hook,
       body: normalizedGenerated.body,
@@ -311,6 +372,19 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       },
       estimatedCost
     )
+    logAiCost({
+      userId,
+      generationId: generation.id,
+      provider: providerResult.provider,
+      model: providerResult.model,
+      totalTokens: estimatedTokens,
+      costUsd: estimatedCost,
+      correlationId,
+      metadata: {
+        task: type,
+        platform: platform ?? 'UNKNOWN',
+      },
+    })
 
     revalidatePath('/dashboard/generate')
 
@@ -319,6 +393,9 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       data: {
         generationId: generation.id,
         content: generatedContent,
+        variants,
+        hashtags,
+        recycledPosts,
         model: providerResult.model,
         provider: providerResult.provider,
         tokens: {
