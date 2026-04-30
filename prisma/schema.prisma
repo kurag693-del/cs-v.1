@@ -21,6 +21,7 @@ enum Platform {
   INSTAGRAM
   TELEGRAM
   VK
+  DZEN
   TIKTOK
   YOUTUBE
 }
@@ -29,6 +30,7 @@ enum ContentStatus {
   DRAFT
   SCHEDULED
   PUBLISHED
+  FAILED
   ARCHIVED
 }
 
@@ -127,6 +129,7 @@ model Brand {
   voice       String?
   tone        String?
   colors      String[]
+  metadata    Json?
   
   generations Generation[]
   posts       Post[]
@@ -192,6 +195,9 @@ model Post {
   scheduledAt  DateTime?
   publishedAt  DateTime?
   status       ContentStatus @default(DRAFT)
+  idempotencyKey String?
+  publishAttempts Int @default(0)
+  lastError    String?
   metadata     Json?
   
   credentialId String?
@@ -208,6 +214,7 @@ model Post {
   @@index([platform])
   @@index([status])
   @@index([scheduledAt])
+  @@index([idempotencyKey])
   @@index([deletedAt])
 }
 

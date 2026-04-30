@@ -1,7 +1,5 @@
 'use server'
 
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { Prisma } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
@@ -10,9 +8,11 @@ import type { GenerationResult } from '@/lib/ai/types'
 import { getAIProvider } from '@/lib/ai/providers/registry'
 import type { AIProviderId } from '@/lib/ai/providers/types'
 import { prisma } from '@/lib/db'
+import { buildPrompt, parseGenerationFromText, type PromptBuildInput } from '@/lib/generate/prompt-utils'
 import { moderator } from '@/lib/ai/moderation'
 import { calculateCost, trackTokenUsage } from '@/lib/ai/utils'
-import { generatedJsonSchema, validateGeneratedContent } from '@/lib/validation/generation-output'
+import { generatedJsonSchema, normalizeGeneratedContent, validateGeneratedContent } from '@/lib/validation/generation-output'
+import { validateSession } from '@/lib/auth/lucia'
 
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
@@ -44,23 +44,6 @@ type GenerateTextPayload =
       type?: string
       metadata?: Record<string, unknown>
     }
-
-export type PromptBuildInput = {
-  topic: string
-  platform: string
-  maxLength: number
-  contentType: 'post' | 'story' | 'tips' | 'announcement'
-  toneOverride: 'brand' | 'humor' | 'formal'
-  includeEmojis: boolean
-}
-
-const TEXT_PROMPT_TEMPLATE = (() => {
-  try {
-    return readFileSync(path.join(process.cwd(), 'prompts', 'v1_text_generator.md'), 'utf-8')
-  } catch {
-    return ''
-  }
-})()
 
 function normalizeGenerateInput(payload: GenerateTextPayload) {
   if (payload instanceof FormData) {
@@ -108,106 +91,28 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
   }
 }
 
-export function extractJsonObject(raw: string): string | null {
+function extractJsonObject(raw: string): string | null {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
   if (start < 0 || end < 0 || end <= start) return null
   return raw.slice(start, end + 1)
 }
 
-type ParsedGenerated = { hook: string; body: string; hashtags: string[]; cta: string }
-
-export function parseGenerationFromText(raw: string): ParsedGenerated {
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  const allHashtags = Array.from(
-    new Set(
-      raw
-        .match(/#[\p{L}\p{N}_]+/gu)
-        ?.map((tag) => tag.trim())
-        .filter(Boolean) ?? []
-    )
-  )
-
-  const textWithoutHashtags = raw
-    .replace(/#[\p{L}\p{N}_]+/gu, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  const hook = textWithoutHashtags[0] ?? lines[0] ?? ''
-  const ctaCandidate = textWithoutHashtags[textWithoutHashtags.length - 1] ?? ''
-  const inferredCta =
-    ctaCandidate !== hook && /!|\?|подпиш|нажм|коммент|переход|попробуйте|узнайте/i.test(ctaCandidate)
-      ? ctaCandidate
-      : 'Напишите в комментариях ваше мнение.'
-
-  const bodyLines = textWithoutHashtags.slice(1, ctaCandidate === inferredCta ? -1 : undefined)
-  const body = bodyLines.join('\n').trim()
-
-  return {
-    hook,
-    body,
-    hashtags: allHashtags,
-    cta: inferredCta,
-  }
+function extractBrandMetadataArray(metadata: Prisma.JsonValue | null | undefined, key: string): string[] {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return []
+  const value = (metadata as Record<string, unknown>)[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
 }
 
-export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, unknown> | null): string {
-  let prompt = TEXT_PROMPT_TEMPLATE
-  const toneMap: Record<PromptBuildInput['toneOverride'], string> = {
-    brand: 'по голосу бренда',
-    humor: 'юмористичный (🎭), но без кринжа и штампов',
-    formal: 'формальный и деловой (💼), без фамильярности',
-  }
-  const contentTypeMap: Record<PromptBuildInput['contentType'], string> = {
-    post: 'классический пост',
-    story: 'сторителлинг-пост',
-    tips: 'пост-советы (список и практические пункты)',
-    announcement: 'анонс/объявление',
-  }
-
-  const replacements: Record<string, string> = {
-    topic: input.topic,
-    platform: input.platform,
-    brand_voice_json: JSON.stringify(brandVoice ?? {}, null, 2),
-    max_length_chars: input.maxLength.toString(),
-    min_length_chars: Math.max(300, Math.floor(input.maxLength * 0.6)).toString(),
-    include_hashtags: 'true',
-    cta_type: 'оставь комментарий',
-    avoid_phrases: '["в современном мире", "уникальный контент", "инновационный подход", "цифровая эпоха"]',
-    content_type: contentTypeMap[input.contentType],
-    tone_override: toneMap[input.toneOverride],
-    include_emojis: input.includeEmojis ? 'true' : 'false',
-  }
-
-  prompt = prompt.replace(/\{\{([a-z0-9_]+)\}\}/gi, (match, variableName: string) => {
-    const replacement = replacements[variableName]
-    if (replacement === undefined) {
-      throw new Error(`Неизвестная переменная промпта: ${match}`)
-    }
-    return replacement
-  })
-
-  return `## Critical Runtime Directives
-- Строго используй тип контента: ${contentTypeMap[input.contentType]}.
-- Строго используй тон: ${toneMap[input.toneOverride]}.
-- Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
-
-${prompt}
-
-## Runtime Overrides
-- Тип контента: ${contentTypeMap[input.contentType]}
-- Тон: ${toneMap[input.toneOverride]}
-- Эмодзи: ${input.includeEmojis ? 'разрешены, но умеренно' : 'не использовать'}
-`
-}
-
-export async function generateText(payload: GenerateTextPayload, userId: string): Promise<GenerationResult> {
+export async function generateText(payload: GenerateTextPayload): Promise<GenerationResult> {
   try {
+    const { user } = await validateSession()
+    const userId = user?.id ?? null
+    if (!userId) {
+      return { success: false, error: 'Пользователь не авторизован', code: 'AUTH_ERROR' }
+    }
+
     const normalizedInput = normalizeGenerateInput(payload)
     const validated = GenerateInputSchema.safeParse({
       type: normalizedInput.type,
@@ -286,6 +191,17 @@ export async function generateText(payload: GenerateTextPayload, userId: string)
       ...(brand?.tone ? { brandTone: brand.tone } : {}),
       ...(brand?.colors?.length ? { brandColors: brand.colors } : {}),
       ...(brand?.description ? { brandDescription: brand.description } : {}),
+      ...(brand?.website ? { brandWebsite: brand.website } : {}),
+      ...(brand?.industry ? { brandIndustry: brand.industry } : {}),
+      ...(extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'examples').length
+        ? { brandExamples: extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'examples') }
+        : {}),
+      ...(extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'forbiddenWords').length
+        ? { forbiddenWords: extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'forbiddenWords') }
+        : {}),
+      ...(extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'vocabularyRules').length
+        ? { preferredWords: extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'vocabularyRules') }
+        : {}),
     }
 
     const enhancedPrompt = buildPrompt(
@@ -331,20 +247,21 @@ export async function generateText(payload: GenerateTextPayload, userId: string)
     })
 
     const jsonPayload = extractJsonObject(providerResult.content)
-    let generated: ParsedGenerated
+    let generated = parseGenerationFromText(providerResult.content)
     if (jsonPayload) {
       try {
         const parsedGeneration = generatedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
-        generated = parsedGeneration.success ? parsedGeneration.data : parseGenerationFromText(providerResult.content)
+        if (parsedGeneration.success) {
+          generated = parsedGeneration.data
+        }
       } catch {
-        generated = parseGenerationFromText(providerResult.content)
+        // keep fallback parsed output
       }
-    } else {
-      generated = parseGenerationFromText(providerResult.content)
     }
 
+    const normalizedGenerated = normalizeGeneratedContent(generated)
     const minLength = Math.max(300, Math.floor(maxLength * 0.6))
-    const generatedValidation = validateGeneratedContent(generated, minLength)
+    const generatedValidation = validateGeneratedContent(normalizedGenerated, minLength)
     if (!generatedValidation.valid) {
       await prisma.generation.update({
         where: { id: generation.id },
@@ -362,12 +279,12 @@ export async function generateText(payload: GenerateTextPayload, userId: string)
       return { success: false, error: generatedValidation.message, code: 'VALIDATION_ERROR' }
     }
 
-    const generatedContent = `${generated.hook}\n\n${generated.body}\n\n${generated.hashtags.join(' ')}\n\n${generated.cta}`.trim()
+    const generatedContent = `${normalizedGenerated.hook}\n\n${normalizedGenerated.body}\n\n${normalizedGenerated.hashtags.join(' ')}\n\n${normalizedGenerated.cta}`.trim()
     const generationOutputJson = JSON.stringify({
-      hook: generated.hook,
-      body: generated.body,
-      hashtags: generated.hashtags,
-      cta: generated.cta,
+      hook: normalizedGenerated.hook,
+      body: normalizedGenerated.body,
+      hashtags: normalizedGenerated.hashtags,
+      cta: normalizedGenerated.cta,
     })
 
     await prisma.generation.update({

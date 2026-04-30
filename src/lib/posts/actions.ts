@@ -1,23 +1,27 @@
 'use server'
 
 import { prisma } from '@/lib/db'
-import { CreatePostSchema, UpdatePostStatusSchema, type Result, validateStatusTransition } from '@/lib/validation/posts'
+import {
+  CalendarPostFiltersSchema,
+  CreatePostSchema,
+  SchedulePostInputSchema,
+  UpdatePostStatusSchema,
+  type Result,
+  validateStatusTransition,
+} from '@/lib/validation/posts'
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ContentStatus, type Platform } from '@prisma/client'
 import { z } from 'zod'
+import { MediaUrlsSchema } from '@/lib/validation/media'
+import { canTransitionPostStatus } from '@/lib/publish/state-machine'
+import { validateSession } from '@/lib/auth/lucia'
 
 const SaveGenerationAsDraftSchema = z.object({
   generationId: z.string().min(1, 'generationId обязателен'),
   userId: z.string().min(1, 'userId обязателен'),
   platform: z.string().min(1, 'platform обязателен'),
   title: z.string().trim().min(1, 'Название поста обязательно').max(120, 'Название слишком длинное').optional(),
-  mediaUrls: z.array(z.string().url('Некорректный URL изображения')).max(10).optional(),
-})
-
-const SchedulePostSchema = z.object({
-  postId: z.string().min(1, 'Некорректный идентификатор поста'),
-  scheduledAt: z.string().datetime({ offset: true, message: 'Некорректная дата планирования' }),
-  userId: z.string().min(1, 'Пользователь не определен'),
+  mediaUrls: MediaUrlsSchema.optional(),
 })
 
 const GenerationOutputSchema = z.object({
@@ -84,7 +88,12 @@ export async function createPost(data: FormData, userId: string): Promise<Result
 
     const post = await prisma.post.create({
       data: {
-        ...validated.data,
+        content: validated.data.content,
+        platform: validated.data.platform,
+        scheduledAt: validated.data.scheduledAt ?? null,
+        mediaUrls: validated.data.mediaUrls ?? [],
+        brandId: validated.data.brandId ?? null,
+        generationId: validated.data.generationId ?? null,
         metadata: (validated.data.metadata ?? {}) as Prisma.InputJsonValue,
         userId,
         status: 'DRAFT' as const,
@@ -291,6 +300,71 @@ export async function getCalendarPosts(userId: string, startDate?: Date, endDate
   }
 }
 
+export async function getCalendarPostsWithFilters(
+  userId: string,
+  filters: { platform?: Platform; status?: ContentStatus; brandId?: string },
+  startDate?: Date,
+  endDate?: Date
+) {
+  const parsedFilters = CalendarPostFiltersSchema.safeParse(filters)
+  if (!parsedFilters.success) {
+    return {
+      success: false,
+      error: parsedFilters.error.issues[0]?.message ?? 'Некорректные фильтры',
+    }
+  }
+
+  try {
+    if (!userId) {
+      return {
+        success: false,
+        error: 'Пользователь не определен',
+      }
+    }
+
+    const posts = await prisma.post.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        platform: parsedFilters.data.platform,
+        status: parsedFilters.data.status,
+        brandId: parsedFilters.data.brandId,
+        ...(startDate && endDate
+          ? {
+              OR: [
+                {
+                  scheduledAt: {
+                    gte: startDate,
+                    lte: endDate,
+                  },
+                },
+                { status: 'DRAFT' },
+              ],
+            }
+          : {}),
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      include: {
+        brand: true,
+        generation: true,
+      },
+    })
+
+    return {
+      success: true,
+      data: posts,
+    }
+  } catch (err: unknown) {
+    console.error('Get calendar posts with filters error:', err)
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Ошибка при загрузке постов',
+    }
+  }
+}
+
 export async function getDrafts(userId: string) {
   try {
     const posts = await prisma.post.findMany({
@@ -448,11 +522,16 @@ export async function saveGenerationAsDraft(
 
 export async function schedulePost(
   postId: string,
-  scheduledAt: string,
-  userId: string
+  scheduledAt: string
 ): Promise<{ success: true } | { success: false; error: string }> {
   try {
-    const parsed = SchedulePostSchema.safeParse({ postId, scheduledAt, userId })
+    const { user } = await validateSession()
+    const currentUserId = user?.id ?? null
+    if (!currentUserId) {
+      return { success: false, error: 'Пользователь не авторизован' }
+    }
+
+    const parsed = SchedulePostInputSchema.safeParse({ postId, scheduledAt, userId: currentUserId })
     if (!parsed.success) {
       return {
         success: false,
@@ -469,6 +548,8 @@ export async function schedulePost(
       select: {
         id: true,
         status: true,
+        scheduledAt: true,
+        metadata: true,
       },
     })
 
@@ -476,17 +557,34 @@ export async function schedulePost(
       return { success: false, error: 'Пост не найден или недоступен' }
     }
 
-    if (post.status === 'PUBLISHED') {
-      return { success: false, error: 'Опубликованный пост нельзя перепланировать' }
-    }
+    const transition = canTransitionPostStatus(post.status, 'SCHEDULED', {
+      scheduledAt: parsed.data.scheduledAt,
+    })
+    if (!transition.valid) return { success: false, error: transition.message }
 
-    await prisma.post.update({
-      where: { id: post.id },
-      data: {
-        scheduledAt: new Date(parsed.data.scheduledAt),
-        status: 'SCHEDULED',
-        updatedAt: new Date(),
-      },
+    const nextScheduledAt = parsed.data.scheduledAt
+    const sameSchedule =
+      post.scheduledAt instanceof Date &&
+      post.scheduledAt.getTime() === nextScheduledAt.getTime() &&
+      post.status === 'SCHEDULED'
+    if (sameSchedule) return { success: true }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.post.update({
+        where: { id: post.id },
+        data: {
+          scheduledAt: nextScheduledAt,
+          status: 'SCHEDULED',
+          metadata: {
+            ...(typeof post.metadata === 'object' && post.metadata ? post.metadata : {}),
+            scheduleMeta: {
+              updatedBy: currentUserId,
+              updatedAt: new Date().toISOString(),
+            },
+          },
+          updatedAt: new Date(),
+        },
+      })
     })
 
     revalidatePath('/dashboard/calendar')

@@ -185,8 +185,7 @@ export default function DashboardPage() {
           type: "social_post",
           topic: trimmedTopic,
           platform: "Instagram",
-        },
-        userId
+        }
       );
 
       if (!result.success || !result.data) {
@@ -248,6 +247,9 @@ export default function DashboardPage() {
                 <Sparkles className="h-4 w-4" />
                 Управление брендами
               </Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/dashboard/integrations">Интеграции платформ</Link>
             </Button>
           </CardContent>
         </Card>

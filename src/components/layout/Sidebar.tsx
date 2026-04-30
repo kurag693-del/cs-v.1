@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart3,
   CalendarDays,
@@ -48,12 +48,10 @@ type SidebarContentProps = {
 function SidebarContent({ onNavigate, compact = false }: SidebarContentProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [isDark, setIsDark] = useState(false);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    setIsDark(root.classList.contains("dark"));
-  }, []);
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof document === "undefined") return false;
+    return document.documentElement.classList.contains("dark");
+  });
 
   const toggleTheme = () => {
     const root = document.documentElement;

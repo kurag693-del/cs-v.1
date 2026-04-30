@@ -1,7 +1,7 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AuthProvider } from "@/lib/auth/hooks";
+import { validateSession } from "@/lib/auth/lucia";
 import { DashboardTopNav } from "@/components/layout/DashboardTopNav";
 import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 import { MobileSidebar, Sidebar } from "@/components/layout/Sidebar";
@@ -11,9 +11,8 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("x-user-id");
-  if (!userId) redirect("/login");
+  const { user } = await validateSession();
+  if (!user) redirect("/login");
 
   return (
     <AuthProvider>

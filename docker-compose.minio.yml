@@ -13,5 +13,20 @@ services:
     volumes:
       - minio-data:/data
 
+  minio-init:
+    image: minio/mc:latest
+    container_name: creative-minio-init
+    depends_on:
+      - minio
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-creative-media}
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin) do echo 'waiting for minio...' && sleep 2; done;
+      /usr/bin/mc mb --ignore-existing local/$${S3_BUCKET};
+      /usr/bin/mc anonymous set download local/$${S3_BUCKET};
+      echo 'bucket '$${S3_BUCKET}' is ready';
+      "
+
 volumes:
   minio-data:

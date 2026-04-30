@@ -1,20 +1,16 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { BrandsClient } from "@/app/dashboard/brands/brands-client";
+import { validateSession } from "@/lib/auth/lucia";
 import { getBrands } from "@/lib/brands/actions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-async function getUserIdFromAuthCookie(): Promise<string | null> {
-  const requestHeaders = await headers();
-  return requestHeaders.get("x-user-id");
-}
-
 export default async function BrandsPage() {
-  const userId = await getUserIdFromAuthCookie();
+  const { user } = await validateSession();
+  const userId = user?.id ?? null;
   if (!userId) {
     redirect("/login");
   }

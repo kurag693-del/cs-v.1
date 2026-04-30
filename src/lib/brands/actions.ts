@@ -1,10 +1,22 @@
 'use server'
 
 import { prisma } from '@/lib/db'
+import { Prisma } from '@prisma/client'
 import { CreateBrandSchema, UpdateBrandSchema, type Result } from '@/lib/validation/brand'
 import { revalidatePath } from 'next/cache'
 
 type BrandInput = FormData | Record<string, unknown>
+
+function parseBrandExamples(examples?: string): string[] {
+  if (!examples || !examples.trim()) return []
+  try {
+    const parsed = JSON.parse(examples) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  } catch {
+    return []
+  }
+}
 
 function normalizeBrandInput(data: BrandInput) {
   if (data instanceof FormData) {
@@ -54,14 +66,38 @@ export async function createBrand(data: BrandInput, userId: string): Promise<Res
       }
     }
 
+    const {
+      name,
+      description,
+      tone,
+      voice,
+      colors,
+      website,
+      industry,
+      isActive,
+      forbiddenWords,
+      examples,
+      vocabularyRules,
+      structureTemplate,
+    } = validated.data
+
     const brand = await prisma.brand.create({
       data: {
-        ...validated.data,
+        name,
+        description: description ?? null,
+        tone,
+        voice: voice ?? null,
+        colors: colors ?? [],
+        website: website || null,
+        industry: industry ?? null,
+        isActive: isActive ?? true,
         user: { connect: { id: userId } },
         metadata: {
-          forbiddenWords: validated.data.forbiddenWords || [],
-          examples: validated.data.examples || '',
-        },
+          forbiddenWords: forbiddenWords ?? [],
+          examples: parseBrandExamples(examples),
+          vocabularyRules: vocabularyRules ?? [],
+          structureTemplate: structureTemplate ?? '',
+        } as Prisma.InputJsonValue,
       },
     })
 
@@ -119,6 +155,21 @@ export async function updateBrand(id: string, data: BrandInput, userId: string):
       }
     }
 
+    const {
+      name,
+      description,
+      tone,
+      voice,
+      colors,
+      website,
+      industry,
+      isActive,
+      forbiddenWords,
+      examples,
+      vocabularyRules,
+      structureTemplate,
+    } = validated.data
+
     const brand = await prisma.brand.update({
       where: {
         id,
@@ -126,11 +177,20 @@ export async function updateBrand(id: string, data: BrandInput, userId: string):
         deletedAt: null,
       },
       data: {
-        ...validated.data,
+        name,
+        description: description ?? null,
+        tone,
+        voice: voice ?? null,
+        colors: colors ?? [],
+        website: website || null,
+        industry: industry ?? null,
+        isActive: isActive ?? true,
         metadata: {
-          forbiddenWords: (validated.data as any).forbiddenWords || [],
-          examples: (validated.data as any).examples || '',
-        },
+          forbiddenWords: forbiddenWords ?? [],
+          examples: parseBrandExamples(examples),
+          vocabularyRules: vocabularyRules ?? [],
+          structureTemplate: structureTemplate ?? '',
+        } as Prisma.InputJsonValue,
         updatedAt: new Date(),
       },
     })

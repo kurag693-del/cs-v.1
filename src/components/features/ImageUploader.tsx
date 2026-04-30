@@ -1,16 +1,18 @@
 'use client'
 
+import Image from 'next/image'
 import { ImagePlus, Loader2, Trash2, UploadCloud } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { uploadImage } from '@/lib/storage/upload'
+import { IMAGE_MIME_WHITELIST, MAX_MEDIA_FILE_SIZE_BYTES, MAX_MEDIA_FILES_PER_POST } from '@/lib/validation/media'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 
 type ImageUploaderProps = {
   userId: string
-  value: string | null
-  onChange: (url: string | null) => void
+  value: string[]
+  onChange: (urls: string[]) => void
 }
 
 export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
@@ -20,32 +22,56 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
   const [error, setError] = useState<string | null>(null)
   const [statusText, setStatusText] = useState<string>('Идет загрузка в хранилище')
 
-  const handleFile = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setError('Можно загружать только изображения')
+  const validateFile = (file: File): string | null => {
+    if (!IMAGE_MIME_WHITELIST.includes(file.type as (typeof IMAGE_MIME_WHITELIST)[number])) {
+      return 'Разрешены только JPG, PNG, WEBP или GIF'
+    }
+    if (file.size > MAX_MEDIA_FILE_SIZE_BYTES) {
+      return 'Максимальный размер файла — 5 МБ'
+    }
+    return null
+  }
+
+  const handleFiles = async (files: FileList | File[]) => {
+    if (isUploading) return
+    const items = Array.from(files)
+    if (items.length === 0) return
+
+    const availableSlots = Math.max(0, MAX_MEDIA_FILES_PER_POST - value.length)
+    if (availableSlots <= 0) {
+      setError(`Достигнут лимит: максимум ${MAX_MEDIA_FILES_PER_POST} изображений`)
       return
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setError('Максимальный размер файла — 5 МБ')
+
+    const filesToUpload = items.slice(0, availableSlots)
+    const firstInvalid = filesToUpload.map(validateFile).find(Boolean)
+    if (firstInvalid) {
+      setError(firstInvalid)
       return
     }
 
     setError(null)
     setIsUploading(true)
     setProgress(10)
-    setStatusText('Загружаем изображение... это может занять до минуты')
+    setStatusText(`Загружаем ${filesToUpload.length} изображени${filesToUpload.length > 1 ? 'я' : 'е'}...`)
     const timer = setInterval(() => {
       setProgress((current) => (current >= 90 ? current : current + 10))
     }, 180)
 
     try {
-      const result = await uploadImage(file, userId)
-      if (!result.success) {
-        setError(result.error)
-        return
+      const uploadedUrls: string[] = []
+      for (const file of filesToUpload) {
+        const result = await uploadImage(file, userId)
+        if (!result.success) {
+          setError(result.error.message)
+          break
+        }
+        uploadedUrls.push(result.data.url)
       }
-      setProgress(100)
-      onChange(result.url)
+      if (uploadedUrls.length > 0) {
+        setProgress(100)
+        onChange(Array.from(new Set([...value, ...uploadedUrls])))
+      }
     } catch (caughtError: unknown) {
       setError(caughtError instanceof Error ? caughtError.message : 'Ошибка загрузки')
     } finally {
@@ -71,10 +97,10 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
         onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) void handleFile(file)
+          if (event.target.files?.length) void handleFiles(event.target.files)
           event.currentTarget.value = ''
         }}
       />
@@ -86,8 +112,7 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           event.preventDefault()
-          const file = event.dataTransfer.files?.[0]
-          if (file && !isUploading) void handleFile(file)
+          if (event.dataTransfer.files?.length && !isUploading) void handleFiles(event.dataTransfer.files)
         }}
         onClick={() => {
           if (!isUploading) {
@@ -98,7 +123,7 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
         {!isUploading ? (
           <>
             <ImagePlus className="mb-2 h-5 w-5" />
-            Перетащите изображение сюда или нажмите для выбора
+            Перетащите изображения сюда или нажмите для выбора (до {MAX_MEDIA_FILES_PER_POST} файлов)
           </>
         ) : null}
         {isUploading ? (
@@ -120,17 +145,28 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
       ) : null}
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
 
-      {value ? (
-        <div className="relative space-y-2">
-          <img
-            src={value}
-            alt="Uploaded preview"
-            className={`max-h-52 w-full rounded-md border object-cover ${isUploading ? 'opacity-60' : ''}`}
-          />
-          <Button type="button" variant="outline" size="sm" onClick={() => onChange(null)} disabled={isUploading}>
-            <Trash2 className="mr-2 h-4 w-4" />
-            Удалить
-          </Button>
+      {value.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Загружено: {value.length}/{MAX_MEDIA_FILES_PER_POST}</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {value.map((url) => (
+              <div key={url} className="space-y-2">
+                <div className={`relative h-44 w-full overflow-hidden rounded-md border ${isUploading ? 'opacity-60' : ''}`}>
+                  <Image src={url} alt="Uploaded preview" fill className="object-cover" unoptimized />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onChange(value.filter((item) => item !== url))}
+                  disabled={isUploading}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Удалить
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

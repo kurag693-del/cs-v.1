@@ -35,6 +35,8 @@ type BrandFormProps = {
 const defaultValues: CreateBrandInput = {
   name: "",
   tone: "",
+  voice: "",
+  colors: [],
   vocabularyRules: [],
   forbiddenWords: [],
   structureTemplate: "",
@@ -57,6 +59,8 @@ export function BrandForm({
     () => ({
       name: initialData?.name ?? defaultValues.name,
       tone: initialData?.tone ?? defaultValues.tone,
+      voice: initialData?.voice ?? defaultValues.voice,
+      colors: initialData?.colors ?? defaultValues.colors,
       vocabularyRules: initialData?.vocabularyRules ?? defaultValues.vocabularyRules,
       forbiddenWords: initialData?.forbiddenWords ?? defaultValues.forbiddenWords,
       structureTemplate: initialData?.structureTemplate ?? defaultValues.structureTemplate,
@@ -140,9 +144,44 @@ export function BrandForm({
                     />
                   </FormControl>
                   <FormDescription>
-                    Укажите, как бренд должен звучать: например, "экспертно, дружелюбно, без канцелярита".
+                    Укажите, как бренд должен звучать: например, &quot;экспертно, дружелюбно, без канцелярита&quot;.
                   </FormDescription>
                   <FormMessage>{form.formState.errors.tone?.message}</FormMessage>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="voice"
+              render={({ field }) => (
+                <FormItem className="min-w-0 md:col-span-2">
+                  <FormLabel>Голос бренда</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Например: экспертный, поддерживающий" {...field} disabled={isSubmitting} />
+                  </FormControl>
+                  <FormDescription>Кратко опишите, как бренд должен звучать в коммуникации.</FormDescription>
+                  <FormMessage>{form.formState.errors.voice?.message}</FormMessage>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="colors"
+              render={({ field }) => (
+                <FormItem className="min-w-0 md:col-span-2">
+                  <FormLabel>Фирменные цвета (HEX)</FormLabel>
+                  <FormControl>
+                    <TagInput
+                      tags={field.value ?? []}
+                      onChange={field.onChange}
+                      placeholder="Например: #FF6B6B, #1A73E8"
+                      className="w-full"
+                    />
+                  </FormControl>
+                  <FormDescription>Добавьте до 5 цветов в формате HEX.</FormDescription>
+                  <FormMessage>{form.formState.errors.colors?.message as string | undefined}</FormMessage>
                 </FormItem>
               )}
             />

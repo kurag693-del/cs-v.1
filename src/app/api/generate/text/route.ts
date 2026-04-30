@@ -18,15 +18,12 @@ export async function POST(request: Request) {
     const maxLength = Number.isFinite(parsedMaxLength) && parsedMaxLength > 0 ? parsedMaxLength : 600
 
     // Generate content
-    const result = await generateText(
-      {
-        topic,
-        platform,
-        brandId,
-        maxLength,
-      },
-      userId
-    )
+    const result = await generateText({
+      topic,
+      platform,
+      brandId,
+      maxLength,
+    })
 
     if (!result.success) {
       return fail(result.error ?? 'Generation failed', 400, 'GENERATION_FAILED')

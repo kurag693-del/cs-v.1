@@ -86,7 +86,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     setLastRequest(payload);
 
     try {
-      const response = await generateText(payload, userId);
+      const response = await generateText(payload);
 
       if (!response.success) {
         const message = response.error || "Не удалось сгенерировать текст";
@@ -434,13 +434,8 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
 
               <ImageUploader
                 userId={userId}
-                value={mediaUrls[0] ?? null}
-                onChange={(url) =>
-                  setMediaUrls((current) => {
-                    if (!url) return [];
-                    return current.includes(url) ? current : [...current, url];
-                  })
-                }
+                value={mediaUrls}
+                onChange={setMediaUrls}
               />
 
               <Button type="submit" className="w-full" disabled={isGenerating}>

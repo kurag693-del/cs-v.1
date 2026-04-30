@@ -36,6 +36,26 @@ type GeneratedValidationInput = {
   cta: string
 }
 
+const META_MARKERS_REGEX = /\[(проверить|check|todo|to-do|draft|черновик|заполнить|уточнить)\]/gi
+
+function cleanupText(value: string): string {
+  return value
+    .replace(META_MARKERS_REGEX, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+export function normalizeGeneratedContent(generated: GeneratedValidationInput): GeneratedValidationInput {
+  return {
+    hook: cleanupText(generated.hook),
+    body: cleanupText(generated.body),
+    hashtags: generated.hashtags.map((tag) => tag.trim()).filter(Boolean),
+    cta: cleanupText(generated.cta),
+  }
+}
+
 export function validateGeneratedContent(generated: GeneratedValidationInput, minLength: number): { valid: true } | { valid: false; message: string } {
   if (!generated.hook.trim() || !generated.cta.trim()) {
     return { valid: false, message: 'Нарушена структура: нужен хук и CTA' }
@@ -46,8 +66,9 @@ export function validateGeneratedContent(generated: GeneratedValidationInput, mi
   }
 
   const fullText = `${generated.hook}\n${generated.body}\n${generated.cta}`.toLowerCase()
-  if (FORBIDDEN_TEMPLATE_PHRASES.some((phrase) => fullText.includes(phrase))) {
-    return { valid: false, message: 'Ответ содержит шаблонные фразы из запрещенного списка' }
+  const matchedForbiddenPhrase = FORBIDDEN_TEMPLATE_PHRASES.find((phrase) => fullText.includes(phrase))
+  if (matchedForbiddenPhrase) {
+    return { valid: false, message: `Ответ содержит шаблонную фразу: "${matchedForbiddenPhrase}"` }
   }
 
   return { valid: true }

@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Brain, Sparkles, Wand2 } from "lucide-react";
@@ -9,14 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getBrands } from "@/lib/brands/actions";
-
-async function getUserIdFromCookie(): Promise<string | null> {
-  const requestHeaders = await headers();
-  return requestHeaders.get("x-user-id");
-}
+import { validateSession } from "@/lib/auth/lucia";
 
 export default async function GeneratePage() {
-  const userId = await getUserIdFromCookie();
+  const { user } = await validateSession();
+  const userId = user?.id ?? null;
   if (!userId) {
     redirect("/login");
   }

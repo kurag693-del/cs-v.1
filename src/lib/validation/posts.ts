@@ -1,12 +1,14 @@
 import { z } from 'zod'
 import { Platform, ContentStatus } from '@prisma/client'
+import { MediaUrlsSchema } from '@/lib/validation/media'
+import { canTransitionPostStatus } from '@/lib/publish/state-machine'
 
 export const CreatePostSchema = z.object({
-  title: z.string().min(1, 'Заголовок обязателен').max(200, 'Не более 200 символов'),
+  title: z.string().min(1, 'Заголовок обязателен').max(200, 'Не более 200 символов').optional(),
   content: z.string().min(1, 'Контент обязателен').max(5000, 'Не более 5000 символов'),
   platform: z.nativeEnum(Platform),
   scheduledAt: z.date().optional(),
-  mediaUrls: z.array(z.string().url()).max(10, 'Максимум 10 медиафайлов').optional(),
+  mediaUrls: MediaUrlsSchema.optional(),
   brandId: z.string().optional(),
   generationId: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -20,8 +22,22 @@ export const UpdatePostStatusSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
+export const CalendarPostFiltersSchema = z.object({
+  platform: z.nativeEnum(Platform).optional(),
+  status: z.nativeEnum(ContentStatus).optional(),
+  brandId: z.string().min(1).optional(),
+})
+
+export const SchedulePostInputSchema = z.object({
+  postId: z.string().min(1, 'Некорректный идентификатор поста'),
+  userId: z.string().min(1, 'Пользователь не определен'),
+  scheduledAt: z.coerce.date(),
+})
+
 export type CreatePostInput = z.infer<typeof CreatePostSchema>
 export type UpdatePostStatusInput = z.infer<typeof UpdatePostStatusSchema>
+export type CalendarPostFiltersInput = z.infer<typeof CalendarPostFiltersSchema>
+export type SchedulePostInput = z.infer<typeof SchedulePostInputSchema>
 
 export type Result<T, E = Error> = {
   success: true
@@ -35,44 +51,9 @@ export type Result<T, E = Error> = {
 
 // Status flow validation
 export function validateStatusTransition(currentStatus: ContentStatus, newStatus: ContentStatus, scheduledAt?: Date): { valid: true } | { valid: false; reason: string } {
-  const now = new Date()
-  const minScheduleDelay = new Date(now.getTime() + 5 * 60 * 1000) // now + 5min
-
-  const transitions: Record<ContentStatus, ContentStatus[]> = {
-    DRAFT: ['SCHEDULED', 'PUBLISHED'],
-    SCHEDULED: ['PUBLISHED', 'DRAFT'],
-    PUBLISHED: [],
-    ARCHIVED: [],
+  const result = canTransitionPostStatus(currentStatus, newStatus, { scheduledAt })
+  if (!result.valid) {
+    return { valid: false, reason: result.message }
   }
-
-  if (!transitions[currentStatus]?.includes(newStatus)) {
-    return {
-      valid: false,
-      reason: `Нельзя перейти из "${currentStatus}" в "${newStatus}"`,
-    }
-  }
-
-  if (newStatus === 'SCHEDULED' && scheduledAt) {
-    if (scheduledAt < minScheduleDelay) {
-      return {
-        valid: false,
-        reason: 'Дата публикации должна быть не ранее 5 минут от текущего времени',
-      }
-    }
-    if (scheduledAt < now) {
-      return {
-        valid: false,
-        reason: 'Дата публикации не может быть в прошлом',
-      }
-    }
-  }
-
-  if (newStatus === 'PUBLISHED' && currentStatus === 'SCHEDULED' && scheduledAt && scheduledAt > now) {
-    return {
-      valid: false,
-      reason: 'Запланированный пост нельзя опубликовать до даты публикации',
-    }
-  }
-
   return { valid: true }
 }

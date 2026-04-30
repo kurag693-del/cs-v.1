@@ -24,6 +24,9 @@ type BrandRow = {
   id: string;
   name: string;
   tone: string | null;
+  voice: string | null;
+  colors: string[];
+  metadata: unknown;
   createdAt: Date;
 };
 
@@ -79,6 +82,19 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
     });
   };
 
+  const extractStringArrayFromMetadata = (metadata: unknown, key: string): string[] => {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+    const value = (metadata as Record<string, unknown>)[key];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  };
+
+  const extractStringFromMetadata = (metadata: unknown, key: string): string | undefined => {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+    const value = (metadata as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  };
+
   return (
     <div className="space-y-6">
       <section className="space-y-4">
@@ -108,6 +124,12 @@ export function BrandsClient({ brands, userId }: BrandsClientProps) {
                   ? {
                       name: editingBrand.name,
                       tone: editingBrand.tone ?? "",
+                      voice: editingBrand.voice ?? "",
+                      colors: editingBrand.colors ?? [],
+                      forbiddenWords: extractStringArrayFromMetadata(editingBrand.metadata, "forbiddenWords"),
+                      vocabularyRules: extractStringArrayFromMetadata(editingBrand.metadata, "vocabularyRules"),
+                      structureTemplate: extractStringFromMetadata(editingBrand.metadata, "structureTemplate") ?? "",
+                      examples: JSON.stringify(extractStringArrayFromMetadata(editingBrand.metadata, "examples")),
                     }
                   : undefined
               }

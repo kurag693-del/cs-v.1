@@ -41,7 +41,8 @@ describe("saveGenerationAsDraft", () => {
     });
     prismaMock.post.create.mockResolvedValue({ id: "post-1" });
 
-    const result = await saveGenerationAsDraft("gen-1", "user-1", "Instagram");
+    const mediaUrls = ["https://cdn.example.com/image-1.jpg"];
+    const result = await saveGenerationAsDraft("gen-1", "user-1", "Instagram", undefined, mediaUrls);
 
     expect(result).toEqual({
       success: true,
@@ -56,6 +57,7 @@ describe("saveGenerationAsDraft", () => {
           status: "DRAFT",
           scheduledAt: null,
           platform: "INSTAGRAM",
+          mediaUrls,
         }),
       })
     );
@@ -81,6 +83,17 @@ describe("saveGenerationAsDraft", () => {
     if (!result.success) {
       expect(result.error).toContain("generationId");
     }
+    expect(prismaMock.generation.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("возвращает ошибку если mediaUrls превышает лимит", async () => {
+    const mediaUrls = Array.from({ length: 11 }, (_, index) => `https://cdn.example.com/${index}.jpg`);
+    const result = await saveGenerationAsDraft("gen-1", "user-1", "Instagram", undefined, mediaUrls);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Максимум 10 изображений",
+    });
     expect(prismaMock.generation.findFirst).not.toHaveBeenCalled();
   });
 });

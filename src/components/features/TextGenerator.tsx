@@ -77,8 +77,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
         provider: "gigachat",
         brandId: brandId === "none" ? undefined : brandId,
         maxLength: maxLength[0],
-      },
-      userId
+      }
     );
 
     if (!response.success) {

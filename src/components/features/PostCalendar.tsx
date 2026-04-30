@@ -11,11 +11,11 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { restrictToWindowEdges } from '@dnd-kit/modifiers'
 import { addDays, format, startOfDay } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { type ContentStatus, type Platform } from '@prisma/client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { schedulePost } from '@/lib/posts/actions'
 import { DraggablePostCard } from '@/components/features/DraggablePostCard'
@@ -53,7 +53,6 @@ type PostCalendarProps = {
     status: string
     scheduledAt: string | Date | null
   }>
-  userId: string
   onPostClick?: (post: { id: string; title: string; platform: string; status: string; scheduledAt: string | Date | null }) => void
   onPostScheduled?: () => void
 }
@@ -112,7 +111,7 @@ function toPublishTime(isoDate: string | null): string {
   return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
 }
 
-export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostScheduled }: PostCalendarProps) {
+export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled }: PostCalendarProps) {
   const { toast } = useToast()
   const sourcePosts = initialPosts ?? legacyPosts ?? []
   const [posts, setPosts] = useState<CalendarPost[]>(
@@ -137,6 +136,8 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
   const [activePostId, setActivePostId] = useState<string | null>(null)
   const [hoveredDayId, setHoveredDayId] = useState<string | null>(null)
   const [weekOffset, setWeekOffset] = useState(0)
+  const requestCountersRef = useRef<Record<string, number>>({})
+  const [isClient, setIsClient] = useState(false)
   const [publishTimes, setPublishTimes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       sourcePosts.map((post) => {
@@ -156,6 +157,10 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
       activationConstraint: { distance: 5 },
     })
   )
+
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   const days = useMemo(() => {
     const start = startOfDay(addDays(new Date(), weekOffset * 7))
@@ -209,6 +214,8 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
     const previousPosts = posts
     const targetPost = posts.find((post) => post.id === activeId)
     if (!targetPost) return
+    const requestId = (requestCountersRef.current[activeId] ?? 0) + 1
+    requestCountersRef.current[activeId] = requestId
 
     setErrorMessage(null)
 
@@ -218,7 +225,10 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
       )
     )
 
-    const result = await schedulePost(activeId, targetDateIso, userId)
+    const result = await schedulePost(activeId, targetDateIso)
+    if (requestCountersRef.current[activeId] !== requestId) {
+      return
+    }
 
     if (result.success) {
       onPostScheduled?.()
@@ -229,7 +239,9 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
       return
     }
 
-    setPosts(previousPosts)
+    setPosts((currentPosts) =>
+      currentPosts.map((post) => (post.id === activeId ? previousPosts.find((item) => item.id === activeId) ?? post : post))
+    )
     setErrorMessage(result.error)
     toast({
       title: 'Ошибка',
@@ -244,6 +256,8 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
     }
 
     const previousValue = publishTimes[postId] ?? '09:00'
+    const requestId = (requestCountersRef.current[postId] ?? 0) + 1
+    requestCountersRef.current[postId] = requestId
     setPublishTimes((current) => ({ ...current, [postId]: value }))
 
     const targetPost = posts.find((post) => post.id === postId)
@@ -264,13 +278,18 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
       currentPosts.map((post) => (post.id === postId ? { ...post, scheduledAt: updatedIso } : post))
     )
 
-    const result = await schedulePost(postId, updatedIso, userId)
+    const result = await schedulePost(postId, updatedIso)
+    if (requestCountersRef.current[postId] !== requestId) {
+      return
+    }
     if (result.success) {
       onPostScheduled?.()
       return
     }
 
-    setPosts(previousPosts)
+    setPosts((currentPosts) =>
+      currentPosts.map((post) => (post.id === postId ? previousPosts.find((item) => item.id === postId) ?? post : post))
+    )
     setPublishTimes((current) => ({ ...current, [postId]: previousValue }))
     setErrorMessage(result.error)
     toast({
@@ -292,7 +311,6 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
       <DndContext
         sensors={sensors}
         autoScroll={false}
-        modifiers={[restrictToWindowEdges]}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
@@ -356,33 +374,38 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, userId, onPostS
             })}
           </div>
         </div>
-        <DragOverlay adjustScale={false}>
-          {activePost ? (
-            <div className="w-64" style={{ marginLeft: 2, marginTop: 2 }}>
-              <Card className="border-primary/60 shadow-xl">
-                <CardContent className="space-y-2 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <Badge variant="outline">{activePost.platform}</Badge>
-                    <Badge>{activePost.status}</Badge>
+        {isClient
+          ? createPortal(
+              <DragOverlay adjustScale={false}>
+                {activePost ? (
+                  <div className="w-64">
+                    <Card className="border-primary/60 shadow-xl">
+                      <CardContent className="space-y-2 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="outline">{activePost.platform}</Badge>
+                          <Badge>{activePost.status}</Badge>
+                        </div>
+                        <p className="line-clamp-2 text-sm font-medium">{activePost.title || 'Без заголовка'}</p>
+                        {hoveredDayId ? (
+                          <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">
+                            Планируется:{' '}
+                            {format(
+                              new Date(`${hoveredDayId}T${publishTimes[activePost.id] ?? '09:00'}:00.000Z`),
+                              'dd.MM.yyyy HH:mm',
+                              { locale: ru }
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Перенесите карточку на день в календаре</p>
+                        )}
+                      </CardContent>
+                    </Card>
                   </div>
-                  <p className="line-clamp-2 text-sm font-medium">{activePost.title || 'Без заголовка'}</p>
-                  {hoveredDayId ? (
-                    <div className="rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs">
-                      Планируется:{' '}
-                      {format(
-                        new Date(`${hoveredDayId}T${publishTimes[activePost.id] ?? '09:00'}:00.000Z`),
-                        'dd.MM.yyyy HH:mm',
-                        { locale: ru }
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Перенесите карточку на день в календаре</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          ) : null}
-        </DragOverlay>
+                ) : null}
+              </DragOverlay>,
+              document.body
+            )
+          : null}
       </DndContext>
     </div>
   )

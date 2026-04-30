@@ -180,7 +180,7 @@ export async function getDashboardData(userId: string): Promise<
     const generationLimit = subscription?.generationLimit ?? 100
     const creditsLeft = Math.max(generationLimit - completedGenerations, 0)
     const connectedPlatformSet = new Set(credentials.map((credential) => credential.platform))
-    const allPlatforms: Platform[] = ['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']
+    const allPlatforms: Platform[] = ['TELEGRAM', 'VK', 'DZEN', 'TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE']
 
     const connectedAccounts = allPlatforms.map((platform) => ({
       platform,

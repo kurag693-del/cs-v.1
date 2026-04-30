@@ -17,6 +17,11 @@ const GIGACHAT_SCOPE = process.env.GIGACHAT_SCOPE ?? 'GIGACHAT_API_PERS'
 const GIGACHAT_MODEL = process.env.GIGACHAT_MODEL ?? 'GigaChat'
 const GIGACHAT_ALLOW_SELF_SIGNED = process.env.GIGACHAT_ALLOW_SELF_SIGNED === 'true'
 
+function normalizeEnv(value?: string): string | undefined {
+  if (!value) return undefined
+  return value.trim().replace(/^['"]|['"]$/g, '')
+}
+
 async function withOptionalSelfSignedTls<T>(callback: () => Promise<T>): Promise<T> {
   if (!GIGACHAT_ALLOW_SELF_SIGNED) {
     return callback()
@@ -37,9 +42,12 @@ async function withOptionalSelfSignedTls<T>(callback: () => Promise<T>): Promise
 }
 
 async function getAccessToken(): Promise<string> {
-  const clientId = process.env.GIGACHAT_CLIENT_ID ?? process.env.CLIENT_ID
-  const clientSecret = process.env.GIGACHAT_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? process.env.Client_Secret
-  const explicitAuthKey = process.env.GIGACHAT_AUTH_KEY
+  const clientId = normalizeEnv(process.env.GIGACHAT_CLIENT_ID ?? process.env.CLIENT_ID)
+  const clientSecret = normalizeEnv(
+    process.env.GIGACHAT_CLIENT_SECRET ?? process.env.CLIENT_SECRET ?? process.env.Client_Secret
+  )
+  const explicitAuthKeyRaw = normalizeEnv(process.env.GIGACHAT_AUTH_KEY)
+  const explicitAuthKey = explicitAuthKeyRaw?.replace(/^Basic\s+/i, '').trim()
   const authKey =
     explicitAuthKey ??
     (clientId && clientSecret ? Buffer.from(`${clientId}:${clientSecret}`).toString('base64') : undefined)

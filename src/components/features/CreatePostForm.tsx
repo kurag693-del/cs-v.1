@@ -72,12 +72,18 @@ export function CreatePostForm({ userId, onSuccess, onCancel }: CreatePostFormPr
   async function onSubmit(data: PostFormData) {
     startTransition(async () => {
       const formData = new FormData()
-      formData.set('title', data.title)
+      formData.set('title', data.title ?? '')
       formData.set('content', data.content)
       formData.set('platform', data.platform)
       formData.set('mediaUrls', JSON.stringify(data.mediaUrls || []))
       formData.set('brandId', data.brandId || '')
-      formData.set('metadata', JSON.stringify({}))
+      formData.set(
+        'metadata',
+        JSON.stringify({
+          title: data.title?.trim() || 'Без заголовка',
+          source: 'manual',
+        })
+      )
 
       const result = await createPost(formData, userId)
 

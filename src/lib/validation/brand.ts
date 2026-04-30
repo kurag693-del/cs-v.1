@@ -1,5 +1,18 @@
 import { z } from 'zod'
 
+const jsonExamplesSchema = z
+  .string()
+  .max(2000, 'Примеры не должны превышать 2000 символов')
+  .refine((value) => {
+    if (!value.trim()) return true
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')
+    } catch {
+      return false
+    }
+  }, 'Примеры должны быть JSON-массивом строк')
+
 export const CreateBrandSchema = z.object({
   name: z.string().min(2, 'Название должно быть не менее 2 символов').max(100, 'Название не должно превышать 100 символов'),
   description: z.string().max(500, 'Описание не должно превышать 500 символов').optional(),
@@ -9,7 +22,7 @@ export const CreateBrandSchema = z.object({
   colors: z.array(z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Цвет должен быть в формате HEX')).max(5, 'Максимум 5 цветов').optional(),
   forbiddenWords: z.array(z.string().min(1)).optional(),
   structureTemplate: z.string().max(500, 'Шаблон структуры не должен превышать 500 символов').optional(),
-  examples: z.string().max(2000, 'Примеры не должны превышать 2000 символов').optional(),
+  examples: jsonExamplesSchema.optional(),
   website: z.string().url('Некорректный URL').optional().or(z.literal('')),
   industry: z.string().max(100, 'Отрасль не должна превышать 100 символов').optional(),
   isActive: z.boolean().optional(),
@@ -26,5 +39,5 @@ export type Result<T, E = Error> = {
 } | {
   success: false
   error: string
-  details?: any
+  details?: unknown
 }
