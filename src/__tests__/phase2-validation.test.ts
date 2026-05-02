@@ -29,6 +29,11 @@ describe('phase 2 validation hardening', () => {
     expect(parsed.success).toBe(false)
   })
 
+  it('accepts data:image url for AI/mock без S3', () => {
+    const parsed = MediaUrlsSchema.safeParse(['data:image/svg+xml;charset=utf-8,PHN2Zy8+'])
+    expect(parsed.success).toBe(true)
+  })
+
   it('rejects media list when item count exceeds limit', () => {
     const parsed = MediaUrlsSchema.safeParse(Array.from({ length: 11 }, (_, index) => `https://cdn.example.com/${index}.jpg`))
 

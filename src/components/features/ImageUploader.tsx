@@ -14,9 +14,11 @@ type ImageUploaderProps = {
   value: string[]
   onChange: (urls: string[]) => void
   disabled?: boolean
+  /** false — скрыть загрузку с диска (например, пока нет S3). Превью по URL / data URL показываются. */
+  allowFileUpload?: boolean
 }
 
-export function ImageUploader({ userId, value, onChange, disabled = false }: ImageUploaderProps) {
+export function ImageUploader({ userId, value, onChange, disabled = false, allowFileUpload = true }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -34,7 +36,7 @@ export function ImageUploader({ userId, value, onChange, disabled = false }: Ima
   }
 
   const handleFiles = async (files: FileList | File[]) => {
-    if (disabled || isUploading) return
+    if (!allowFileUpload || disabled || isUploading) return
     const items = Array.from(files)
     if (items.length === 0) return
 
@@ -87,18 +89,27 @@ export function ImageUploader({ userId, value, onChange, disabled = false }: Ima
   return (
     <div className="space-y-3 rounded-lg border p-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">Изображение для поста</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || isUploading}
-        >
-          {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-          Выбрать файл
-        </Button>
+        <p className="text-sm font-medium">Изображения к посту</p>
+        {allowFileUpload ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || isUploading}
+          >
+            {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+            Выбрать файл
+          </Button>
+        ) : null}
       </div>
+
+      {!allowFileUpload ? (
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          Загрузка файлов с компьютера отключена (нет настроенного S3). Добавьте картинку через генерацию ИИ выше или укажите
+          публичный URL у себя в процессе позже.
+        </p>
+      ) : null}
 
       <input
         ref={fileInputRef}
@@ -112,34 +123,36 @@ export function ImageUploader({ userId, value, onChange, disabled = false }: Ima
         }}
       />
 
-      <label
-        className={`relative flex flex-col items-center justify-center rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground ${
-          isUploading ? 'cursor-not-allowed' : 'cursor-pointer'
-        }`}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault()
-          if (event.dataTransfer.files?.length && !isUploading) void handleFiles(event.dataTransfer.files)
-        }}
-        onClick={() => {
-          if (!isUploading) {
-            fileInputRef.current?.click()
-          }
-        }}
-      >
-        {!isUploading ? (
-          <>
-            <ImagePlus className="mb-2 h-5 w-5" />
-            Перетащите изображения сюда или нажмите для выбора (до {MAX_MEDIA_FILES_PER_POST} файлов)
-          </>
-        ) : null}
-        {isUploading ? (
-          <span className="absolute inset-0 flex items-center justify-center rounded-md bg-background/80 text-sm font-medium text-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Загружаем изображение...
-          </span>
-        ) : null}
-      </label>
+      {allowFileUpload ? (
+        <label
+          className={`relative flex flex-col items-center justify-center rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground ${
+            isUploading ? 'cursor-not-allowed' : 'cursor-pointer'
+          }`}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault()
+            if (event.dataTransfer.files?.length && !isUploading) void handleFiles(event.dataTransfer.files)
+          }}
+          onClick={() => {
+            if (!isUploading) {
+              fileInputRef.current?.click()
+            }
+          }}
+        >
+          {!isUploading ? (
+            <>
+              <ImagePlus className="mb-2 h-5 w-5" />
+              Перетащите изображения сюда или нажмите для выбора (до {MAX_MEDIA_FILES_PER_POST} файлов)
+            </>
+          ) : null}
+          {isUploading ? (
+            <span className="absolute inset-0 flex items-center justify-center rounded-md bg-background/80 text-sm font-medium text-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Загружаем изображение...
+            </span>
+          ) : null}
+        </label>
+      ) : null}
 
       {isUploading ? (
         <div className="space-y-1">
@@ -154,7 +167,7 @@ export function ImageUploader({ userId, value, onChange, disabled = false }: Ima
 
       {value.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">Загружено: {value.length}/{MAX_MEDIA_FILES_PER_POST}</p>
+          <p className="text-xs text-muted-foreground">В посте: {value.length}/{MAX_MEDIA_FILES_PER_POST}</p>
           <div className="grid gap-3 sm:grid-cols-2">
             {value.map((url) => (
               <div key={url} className="space-y-2">

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "it-b2b",
+    "name": "IT B2B",
+    "industry": "B2B · IT и сервисы",
+    "category": "b2b",
+    "defaultPrompt": "Короткий экспертный пост для LinkedIn-стиля во ВКонтакте или Telegram: одна боль бизнеса (например, интеграции или поддержка), практический инсайт без жаргона, мягкий CTA на консультацию.",
+    "suggestedPlatforms": ["Telegram", "VK", "TikTok"],
+    "tone": "formal",
+    "defaultContentType": "tips"
+  },
+  {
+    "id": "real-estate",
+    "name": "Недвижимость",
+    "industry": "Недвижимость · агент / застройщик",
+    "category": "realestate",
+    "defaultPrompt": "Экспертный пост о районе или типе недвижимости: для кого подходит, на что смотреть при выборе, без обещаний доходности; мягкий вопрос к аудитории в конце.",
+    "suggestedPlatforms": ["VK", "Telegram", "Instagram"],
+    "tone": "formal",
+    "defaultContentType": "tips"
+  }
+]

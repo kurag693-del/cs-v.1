@@ -1,4 +1,6 @@
+import { inlineMediaForProxyPayload, parseFirstMediaUrl } from '@/lib/publish/parse-media-url'
 import { sendPublishViaProxy } from '@/lib/publish/proxy-client'
+import { sendTelegramDirectWithMedia } from '@/lib/publish/telegram-api'
 
 type TelegramPublishInput = {
   content: string
@@ -51,57 +53,21 @@ export async function publishToTelegram(input: TelegramPublishInput): Promise<{ 
       }
     }
 
-    const endpoint = `https://api.telegram.org/bot${botToken}/${input.mediaUrls.length > 0 ? 'sendPhoto' : 'sendMessage'}`
-    const body =
-      input.mediaUrls.length > 0
-        ? { chat_id: chatId, photo: input.mediaUrls[0], caption: input.content }
-        : { chat_id: chatId, text: input.content }
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const payload = (await response.json()) as { ok?: boolean; result?: { message_id?: number }; description?: string }
-      if (!response.ok || !payload.ok) {
-        return {
-          success: false,
-          error: payload.description ? `Telegram API error: ${payload.description}` : 'Telegram API request failed',
-        }
-      }
-      return {
-        success: true,
-        externalId: String(payload.result?.message_id ?? `telegram-${Date.now()}`),
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Telegram direct publish failed'
-      const causeCode =
-        typeof error === 'object' &&
-        error &&
-        'cause' in error &&
-        typeof (error as { cause?: { code?: unknown } }).cause?.code === 'string'
-          ? (error as { cause?: { code?: string } }).cause?.code
-          : undefined
-      const causeMessage =
-        typeof error === 'object' &&
-        error &&
-        'cause' in error &&
-        typeof (error as { cause?: { message?: unknown } }).cause?.message === 'string'
-          ? (error as { cause?: { message?: string } }).cause?.message
-          : undefined
-      return {
-        success: false,
-        error: [message, causeCode, causeMessage].filter(Boolean).join(' | '),
-      }
-    }
+    const firstMedia = parseFirstMediaUrl(input.mediaUrls)
+    const result = await sendTelegramDirectWithMedia({
+      botToken,
+      chatId,
+      caption: input.content,
+      firstMedia,
+    })
+    return result
   }
 
   const directResult = await tryDirectTelegramPublish()
   if (directResult?.success) {
     return directResult
   }
-  const directError = directResult?.error
+  const directError = directResult && !directResult.success ? directResult.error : undefined
 
   const escaped = input.content
     .replace(/_/g, '\\_')
@@ -109,12 +75,26 @@ export async function publishToTelegram(input: TelegramPublishInput): Promise<{ 
     .replace(/\[/g, '\\[')
     .replace(/\]/g, '\\]')
 
+  const parsed = parseFirstMediaUrl(input.mediaUrls)
+  const inline = inlineMediaForProxyPayload(parsed)
+
   const result = await sendPublishViaProxy({
     platform: 'telegram',
     content: escaped,
     mediaUrls: input.mediaUrls,
     metadata: {
       ...input.metadata,
+      ...(inline
+        ? {
+            publishInlineImage: {
+              base64: inline.inlineBase64,
+              mimeType: inline.mimeType,
+              filename: inline.filename,
+            },
+          }
+        : parsed.kind === 'remote'
+          ? { publishRemoteImageUrl: parsed.url }
+          : {}),
       credential: input.credential
         ? {
             id: input.credential.id,

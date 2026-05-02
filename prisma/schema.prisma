@@ -54,6 +54,20 @@ enum SubscriptionStatus {
   TRIALING
 }
 
+enum WorkspaceMemberRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+/** Роли, которые можно назначить через инвайт (не OWNER). */
+enum WorkspaceInviteRole {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
 model Profile {
   id          String   @id @default(cuid())
   userId      String   @unique
@@ -95,6 +109,10 @@ model User {
   subscriptions Subscription[]
   credentials  PlatformCredential[]
   sessions     Session[]
+
+  ownedWorkspaces   Workspace[]         @relation("WorkspaceOwner")
+  workspaceMembers  WorkspaceMember[]
+  workspaceInvitesCreated WorkspaceInvite[] @relation("WorkspaceInviteCreator")
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -102,6 +120,70 @@ model User {
   
   @@index([email])
   @@index([deletedAt])
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  /** JSON: editorsCanPublish (bool), прочие флаги workspace */
+  settings  Json?
+
+  members  WorkspaceMember[]
+  invites  WorkspaceInvite[]
+  brands   Brand[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([ownerId])
+  @@index([deletedAt])
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role WorkspaceMemberRole
+
+  /** Делегирование от OWNER только для участников с ролью ADMIN */
+  delegateBilling     Boolean @default(false)
+  delegateFullAccess  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+}
+
+model WorkspaceInvite {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  email       String
+  emailNorm   String
+  role        WorkspaceInviteRole
+
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+
+  createdById String
+  createdBy   User     @relation("WorkspaceInviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, emailNorm])
+  @@index([expiresAt])
 }
 
 model Session {
@@ -118,6 +200,8 @@ model Brand {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   profileId   String?
   profile     Profile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
   
@@ -141,6 +225,7 @@ model Brand {
   deletedAt   DateTime? // Soft delete
   
   @@index([userId])
+  @@index([workspaceId])
   @@index([profileId])
   @@index([isActive])
   @@index([deletedAt])

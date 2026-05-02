@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { MediaUrlsSchema } from '@/lib/validation/media'
 import { canTransitionPostStatus } from '@/lib/publish/state-machine'
 import { validateSession } from '@/lib/auth/lucia'
+import { assertUserCanScheduleOrPublishPost } from '@/lib/workspace/publish-guard'
 import { getApprovalStatus } from '@/lib/approval/workflow'
 
 const SaveGenerationAsDraftSchema = z.object({
@@ -151,6 +152,13 @@ export async function updatePostStatus(data: FormData, userId: string): Promise<
     // Fetch current post
     const currentPost = await prisma.post.findFirst({
       where: { id: postId, userId },
+      select: {
+        id: true,
+        userId: true,
+        brandId: true,
+        status: true,
+        scheduledAt: true,
+      },
     })
 
     if (!currentPost) {
@@ -158,6 +166,16 @@ export async function updatePostStatus(data: FormData, userId: string): Promise<
         success: false,
         error: 'Пост не найден',
         code: 'NOT_FOUND',
+      }
+    }
+
+    if (status === 'SCHEDULED' || status === 'PUBLISHED') {
+      const gate = await assertUserCanScheduleOrPublishPost({
+        actorUserId: userId,
+        post: { userId: currentPost.userId, brandId: currentPost.brandId },
+      })
+      if (!gate.ok) {
+        return { success: false, error: gate.message, code: gate.code }
       }
     }
 
@@ -232,6 +250,16 @@ export async function updatePostSchedule(data: FormData, userId: string): Promis
     }
 
     const newStatus = scheduledAt <= new Date() ? 'PUBLISHED' : 'SCHEDULED'
+
+    if (newStatus === 'SCHEDULED' || newStatus === 'PUBLISHED') {
+      const gate = await assertUserCanScheduleOrPublishPost({
+        actorUserId: userId,
+        post: { userId: currentPost.userId, brandId: currentPost.brandId },
+      })
+      if (!gate.ok) {
+        return { success: false, error: gate.message, code: gate.code }
+      }
+    }
 
     const post = await prisma.post.update({
       where: {
@@ -576,6 +604,8 @@ export async function schedulePost(
       },
       select: {
         id: true,
+        userId: true,
+        brandId: true,
         status: true,
         scheduledAt: true,
         metadata: true,
@@ -593,6 +623,14 @@ export async function schedulePost(
     const approvalStatus = getApprovalStatus(post.metadata)
     if (approvalStatus !== 'APPROVED') {
       return { success: false, error: 'Пост нельзя запланировать без одобрения. Переведите в APPROVED.' }
+    }
+
+    const gate = await assertUserCanScheduleOrPublishPost({
+      actorUserId: currentUserId,
+      post: { userId: post.userId, brandId: post.brandId },
+    })
+    if (!gate.ok) {
+      return { success: false, error: gate.message }
     }
 
     const nextScheduledAt = parsed.data.scheduledAt

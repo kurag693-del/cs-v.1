@@ -16,6 +16,7 @@ import {
   Sparkles,
   Sun,
   Wallet,
+  Users,
 } from "lucide-react";
 
 import { signOut } from "@/lib/auth/actions";
@@ -28,6 +29,7 @@ const navGroups = [
     title: "Работа",
     items: [
       { href: "/dashboard", label: "Главная", icon: Home },
+      { href: "/dashboard/workspace", label: "Команда", icon: Users },
       { href: "/dashboard/brands", label: "Бренды", icon: Palette },
       { href: "/dashboard/generate", label: "Генератор", icon: Sparkles },
       { href: "/dashboard/calendar", label: "Календарь", icon: CalendarDays },

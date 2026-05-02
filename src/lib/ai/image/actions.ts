@@ -1,9 +1,11 @@
 'use server'
 
 import { z } from 'zod'
+import { generateRasterImage } from '@/lib/ai/image/image-gen/router'
 import { getConfiguredAIProviderIds, resolveEffectiveDefaultProvider } from '@/lib/ai/providers/availability'
 import { getAIProvider } from '@/lib/ai/providers/registry'
 import type { AIProviderId } from '@/lib/ai/providers/types'
+import { generateRasterImageInputSchema } from '@/lib/validation/image-gen'
 import { aiProviderIdSchema } from '@/lib/validation/ai-provider'
 
 const GenerateCoverPromptSchema = z.object({
@@ -16,6 +18,45 @@ const GenerateCoverPromptSchema = z.object({
 type GenerateCoverPromptResult =
   | { success: true; data: { imagePrompt: string; provider: AIProviderId; model: string } }
   | { success: false; error: { code: 'VALIDATION_ERROR' | 'PROVIDER_ERROR'; message: string } }
+
+export async function generatePostRasterImage(input: unknown): Promise<
+  | { success: true; data: { imageUrl: string; backend: string; providerLabel: string } }
+  | { success: false; error: { code: 'VALIDATION_ERROR' | 'IMAGE_GEN_ERROR'; message: string } }
+> {
+  const validated = generateRasterImageInputSchema.safeParse(input)
+  if (!validated.success) {
+    return {
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: validated.error.issues[0]?.message ?? 'Некорректные параметры',
+      },
+    }
+  }
+  try {
+    const out = await generateRasterImage({
+      prompt: validated.data.prompt,
+      width: validated.data.width,
+      height: validated.data.height,
+    })
+    return {
+      success: true,
+      data: {
+        imageUrl: out.imageUrl,
+        backend: out.backend,
+        providerLabel: out.providerLabel,
+      },
+    }
+  } catch (e: unknown) {
+    return {
+      success: false,
+      error: {
+        code: 'IMAGE_GEN_ERROR',
+        message: e instanceof Error ? e.message : 'Не удалось сгенерировать изображение',
+      },
+    }
+  }
+}
 
 export async function generateCoverPrompt(input: unknown): Promise<GenerateCoverPromptResult> {
   const validated = GenerateCoverPromptSchema.safeParse(input)

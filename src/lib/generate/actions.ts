@@ -19,6 +19,7 @@ import { createCorrelationId, logAiCost } from '@/lib/observability/cost-log'
 import { AB_VARIANT_LABELS, buildAbVariants } from '@/lib/ai/workflows/ab-variants'
 import { generateAutoHashtags } from '@/lib/ai/workflows/hashtags'
 import { recycleContentForPlatforms, type RecycleTarget } from '@/lib/ai/workflows/recycle'
+import { getBuiltinTemplateById } from '@/lib/templates/builtin-templates'
 
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
@@ -36,6 +37,7 @@ const GenerateInputSchema = z.object({
   autoHashtags: z.boolean().default(true),
   enableRecycle: z.boolean().default(false),
   recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
+  templateId: z.string().min(1).max(80).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
@@ -57,6 +59,7 @@ type GenerateTextPayload =
       autoHashtags?: boolean
       enableRecycle?: boolean
       recycleTargets?: Array<'Instagram' | 'Telegram' | 'VK' | 'TikTok' | 'Dzen'>
+      templateId?: string
       type?: string
       metadata?: Record<string, unknown>
     }
@@ -98,6 +101,10 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
         }
       })(),
       platformLabel: payload.get('platform')?.toString() ?? 'Instagram',
+      templateId: (() => {
+        const raw = payload.get('templateId')
+        return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+      })(),
       metadata: typeof metadataRaw === 'string' && metadataRaw.length > 0 ? (JSON.parse(metadataRaw) as Record<string, unknown>) : undefined,
     }
   }
@@ -130,6 +137,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     enableRecycle: payload.enableRecycle ?? false,
     recycleTargets: payload.recycleTargets ?? [],
     platformLabel: payload.platform ?? 'Instagram',
+    templateId: payload.templateId,
     metadata: payload.metadata,
   }
 }
@@ -266,6 +274,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       autoHashtags: normalizedInput.autoHashtags,
       enableRecycle: normalizedInput.enableRecycle,
       recycleTargets: normalizedInput.recycleTargets,
+      templateId: normalizedInput.templateId,
       metadata: normalizedInput.metadata,
     })
 
@@ -293,6 +302,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       autoHashtags,
       enableRecycle,
       recycleTargets,
+      templateId,
       metadata,
     } = validated.data
 
@@ -329,6 +339,11 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
     const usedGenerations = await prisma.generation.count({ where: { userId, status: 'COMPLETED' } })
     if (credits - usedGenerations <= 0) {
       return { success: false, error: 'Insufficient credits. Please upgrade your plan.', code: 'INSUFFICIENT_CREDITS' }
+    }
+
+    const templateMeta = templateId ? getBuiltinTemplateById(templateId) : null
+    if (templateId && !templateMeta) {
+      return { success: false, error: 'Неизвестный шаблон ниши', code: 'VALIDATION_ERROR' }
     }
 
     const moderationResult = await moderator.moderateContent(prompt)
@@ -376,6 +391,21 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       ...(extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'vocabularyRules').length
         ? { preferredWords: extractBrandMetadataArray(brand?.metadata as Prisma.JsonValue | null | undefined, 'vocabularyRules') }
         : {}),
+      ...(templateMeta
+        ? {
+            templateId: templateMeta.id,
+            templateName: templateMeta.name,
+            templateIndustry: templateMeta.industry,
+          }
+        : {}),
+      ...(templateMeta?.nicheToneGuidance
+        ? { nicheToneGuidance: templateMeta.nicheToneGuidance }
+        : {}),
+      ...(templateMeta?.suggestedHashtags?.length
+        ? { templateSuggestedHashtags: templateMeta.suggestedHashtags }
+        : {}),
+      ...(templateMeta?.suggestedCta ? { templateSuggestedCta: templateMeta.suggestedCta } : {}),
+      ...(templateMeta?.contentPillars?.length ? { contentPillars: templateMeta.contentPillars } : {}),
     }
 
     const enhancedPrompt = buildPrompt(
@@ -417,6 +447,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
           provider,
           estimatedCost,
           plannedVariants: variantsCount,
+          ...(templateId ? { templateId } : {}),
           ...metadata,
         } as unknown) as Prisma.InputJsonValue,
       },

@@ -13,6 +13,7 @@ import { EnqueuePublishJobSchema, type PublishTarget } from '@/lib/validation/pu
 import { getActiveCredentialForPublishing } from '@/lib/platform-credentials/actions'
 import { revalidatePath } from 'next/cache'
 import { getApprovalStatus } from '@/lib/approval/workflow'
+import { assertUserCanScheduleOrPublishPost } from '@/lib/workspace/publish-guard'
 
 function resolvePublishTarget(platform: string): PublishTarget {
   if (platform === 'TELEGRAM') return 'TELEGRAM'
@@ -34,6 +35,8 @@ export async function enqueuePublishJob(userId: string, postId: string, target: 
     where: { id: postId, userId, deletedAt: null },
     select: {
       id: true,
+      userId: true,
+      brandId: true,
       idempotencyKey: true,
       publishAttempts: true,
       status: true,
@@ -42,6 +45,14 @@ export async function enqueuePublishJob(userId: string, postId: string, target: 
 
   if (!post) {
     return { success: false, error: 'Post not found' }
+  }
+
+  const publishGate = await assertUserCanScheduleOrPublishPost({
+    actorUserId: userId,
+    post: { userId: post.userId, brandId: post.brandId },
+  })
+  if (!publishGate.ok) {
+    return { success: false as const, error: publishGate.message }
   }
 
   const idempotencyKey = post.idempotencyKey ?? randomIdempotencyKey(post.id)

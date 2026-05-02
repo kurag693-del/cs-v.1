@@ -8,6 +8,7 @@ type ProxyPublishPayload = {
   platform: 'telegram' | 'vk' | 'dzen'
   content: string
   mediaUrls: string[]
+  /** Произвольные поля: publishInlineImage (base64), publishRemoteImageUrl, credential, … */
   metadata: Record<string, unknown>
 }
 

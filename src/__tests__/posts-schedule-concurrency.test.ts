@@ -45,6 +45,8 @@ describe('schedulePost concurrency behavior', () => {
     const dateIso = '2028-01-01T10:00:00.000Z'
     prismaMock.post.findFirst.mockResolvedValue({
       id: 'post-1',
+      userId: 'user-1',
+      brandId: null,
       status: 'SCHEDULED',
       scheduledAt: new Date(dateIso),
       metadata: approvedMetadata,
@@ -62,12 +64,16 @@ describe('schedulePost concurrency behavior', () => {
   it('applies an update when concurrent request changes to a new date', async () => {
     prismaMock.post.findFirst.mockResolvedValueOnce({
       id: 'post-1',
+      userId: 'user-1',
+      brandId: null,
       status: 'SCHEDULED',
       scheduledAt: new Date('2028-01-01T10:00:00.000Z'),
       metadata: approvedMetadata,
     })
     prismaMock.post.findFirst.mockResolvedValueOnce({
       id: 'post-1',
+      userId: 'user-1',
+      brandId: null,
       status: 'SCHEDULED',
       scheduledAt: new Date('2028-01-01T10:00:00.000Z'),
       metadata: approvedMetadata,

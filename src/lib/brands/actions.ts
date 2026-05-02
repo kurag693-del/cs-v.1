@@ -3,6 +3,8 @@
 import { prisma } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { CreateBrandSchema, UpdateBrandSchema, type Result } from '@/lib/validation/brand'
+import { canUserMutateBrand } from '@/lib/brands/access'
+import { ensurePersonalWorkspace } from '@/lib/workspace/actions'
 import { revalidatePath } from 'next/cache'
 
 type BrandInput = FormData | Record<string, unknown>
@@ -54,6 +56,8 @@ function normalizeBrandInput(data: BrandInput) {
 
 export async function createBrand(data: BrandInput, userId: string): Promise<Result<any>> {
   try {
+    const workspaceId = await ensurePersonalWorkspace(userId)
+
     const rawData = normalizeBrandInput(data)
 
     const validated = CreateBrandSchema.safeParse(rawData)
@@ -83,6 +87,8 @@ export async function createBrand(data: BrandInput, userId: string): Promise<Res
 
     const brand = await prisma.brand.create({
       data: {
+        userId,
+        workspaceId,
         name,
         description: description ?? null,
         tone,
@@ -91,7 +97,6 @@ export async function createBrand(data: BrandInput, userId: string): Promise<Res
         website: website || null,
         industry: industry ?? null,
         isActive: isActive ?? true,
-        user: { connect: { id: userId } },
         metadata: {
           forbiddenWords: forbiddenWords ?? [],
           examples: parseBrandExamples(examples),
@@ -118,10 +123,18 @@ export async function createBrand(data: BrandInput, userId: string): Promise<Res
 
 export async function getBrands(userId: string) {
   try {
+    await ensurePersonalWorkspace(userId)
+
+    const memberships = await prisma.workspaceMember.findMany({
+      where: { userId },
+      select: { workspaceId: true },
+    })
+    const workspaceIds = memberships.map((m) => m.workspaceId)
+
     const brands = await prisma.brand.findMany({
       where: {
-        userId,
         deletedAt: null,
+        OR: [{ workspaceId: { in: workspaceIds } }, { userId, workspaceId: null }],
       },
       orderBy: {
         createdAt: 'desc',
@@ -170,10 +183,17 @@ export async function updateBrand(id: string, data: BrandInput, userId: string):
       structureTemplate,
     } = validated.data
 
+    const allowed = await canUserMutateBrand(userId, id)
+    if (!allowed) {
+      return {
+        success: false,
+        error: 'Недостаточно прав для изменения бренда',
+      }
+    }
+
     const brand = await prisma.brand.update({
       where: {
         id,
-        userId,
         deletedAt: null,
       },
       data: {
@@ -212,10 +232,17 @@ export async function updateBrand(id: string, data: BrandInput, userId: string):
 
 export async function deleteBrand(id: string, userId: string): Promise<Result<any>> {
   try {
+    const allowed = await canUserMutateBrand(userId, id)
+    if (!allowed) {
+      return {
+        success: false,
+        error: 'Недостаточно прав для удаления бренда',
+      }
+    }
+
     const brand = await prisma.brand.update({
       where: {
         id,
-        userId,
         deletedAt: null,
       },
       data: {

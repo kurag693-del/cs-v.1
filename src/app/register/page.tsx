@@ -63,7 +63,7 @@ export default function RegisterPage() {
         <Card className="hidden rounded-3xl border-border bg-card lg:block">
           <CardContent className="space-y-5 p-8">
             <Badge variant="secondary" className="w-fit">
-              Start Your Workspace
+              Рабочее пространство
             </Badge>
             <div className="space-y-3">
               <h1 className="text-4xl font-bold tracking-[-0.03em]">Создайте аккаунт</h1>
@@ -74,9 +74,11 @@ export default function RegisterPage() {
             <div className="rounded-2xl border border-border bg-secondary p-4">
               <p className="inline-flex items-center gap-2 text-[0.875rem] font-medium">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Fast onboarding
+                Быстрый онбординг
               </p>
-              <p className="mt-1 text-[0.8125rem] text-muted-foreground">Первые контент-результаты уже в первые минуты после регистрации.</p>
+              <p className="mt-1 text-[0.8125rem] text-muted-foreground">
+                Бренд, генерация с шаблоном ниши, календарь — по шагам после входа.
+              </p>
             </div>
           </CardContent>
         </Card>

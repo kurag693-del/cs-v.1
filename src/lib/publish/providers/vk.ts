@@ -1,3 +1,4 @@
+import { inlineMediaForProxyPayload, parseFirstMediaUrl } from '@/lib/publish/parse-media-url'
 import { sendPublishViaProxy } from '@/lib/publish/proxy-client'
 
 type VkPublishInput = {
@@ -15,12 +16,26 @@ type VkPublishInput = {
 }
 
 export async function publishToVk(input: VkPublishInput): Promise<{ success: true; externalId: string } | { success: false; error: string }> {
+  const parsed = parseFirstMediaUrl(input.mediaUrls)
+  const inline = inlineMediaForProxyPayload(parsed)
+
   const result = await sendPublishViaProxy({
     platform: 'vk',
     content: input.content,
     mediaUrls: input.mediaUrls,
     metadata: {
       ...input.metadata,
+      ...(inline
+        ? {
+            publishInlineImage: {
+              base64: inline.inlineBase64,
+              mimeType: inline.mimeType,
+              filename: inline.filename,
+            },
+          }
+        : parsed.kind === 'remote'
+          ? { publishRemoteImageUrl: parsed.url }
+          : {}),
       credential: input.credential
         ? {
             id: input.credential.id,

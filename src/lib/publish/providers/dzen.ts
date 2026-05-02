@@ -1,3 +1,4 @@
+import { inlineMediaForProxyPayload, parseFirstMediaUrl } from '@/lib/publish/parse-media-url'
 import { sendPublishViaProxy } from '@/lib/publish/proxy-client'
 
 type DzenPublishInput = {
@@ -33,12 +34,26 @@ function buildDzenFallbackMarkdown(content: string, mediaUrls: string[]): string
 }
 
 export async function publishToDzen(input: DzenPublishInput): Promise<DzenPublishSuccess | { success: false; error: string }> {
+  const parsed = parseFirstMediaUrl(input.mediaUrls)
+  const inline = inlineMediaForProxyPayload(parsed)
+
   const result = await sendPublishViaProxy({
     platform: 'dzen',
     content: input.content,
     mediaUrls: input.mediaUrls,
     metadata: {
       ...input.metadata,
+      ...(inline
+        ? {
+            publishInlineImage: {
+              base64: inline.inlineBase64,
+              mimeType: inline.mimeType,
+              filename: inline.filename,
+            },
+          }
+        : parsed.kind === 'remote'
+          ? { publishRemoteImageUrl: parsed.url }
+          : {}),
       credential: input.credential
         ? {
             id: input.credential.id,

@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { CheckCircle2, Circle, Sparkles } from 'lucide-react'
+import { Building2, CheckCircle2, Circle, Sparkles, Users } from 'lucide-react'
 
 import { validateSession } from '@/lib/auth/lucia'
 import { getOnboardingProgress } from '@/lib/onboarding/actions'
+import { TemplateSelector } from '@/components/features/TemplateSelector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -37,14 +38,51 @@ export default async function OnboardingPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 md:p-6">
+      <Card className="border-muted">
+        <CardHeader>
+          <CardTitle className="text-base">Как устроено приложение</CardTitle>
+          <CardDescription className="leading-relaxed">
+            <strong>Рабочее пространство</strong> — контейнер для команды и брендов. <strong>Бренд</strong> — настройки
+            голоса и тона для контента. Генерация и календарь работают в контексте выбранного бренда и пространства.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/dashboard/workspace">
+              <Users className="mr-2 h-4 w-4" />
+              Команда и доступ
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/dashboard/brands">
+              <Building2 className="mr-2 h-4 w-4" />
+              Бренды
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Старт с шаблона ниши</CardTitle>
+          <CardDescription>
+            Откройте генератор с пресетом темы, платформы и тона. Составной id шаблона вида{' '}
+            <span className="font-mono text-xs">coffee-shop__new-menu-item</span> — это сценарий внутри выбранной сферы.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TemplateSelector mode="linkToGenerate" />
+        </CardContent>
+      </Card>
+
       <Card className="border-primary/20">
         <CardHeader>
           <Badge variant="secondary" className="w-fit">
-            Быстрый старт
+            Четыре шага
           </Badge>
           <CardTitle className="mt-2">Онбординг Креатив-студии</CardTitle>
           <CardDescription>
-            Пройдите 3 шага до первой полноценной публикации. Прогресс сохраняется автоматически.
+            От бренда до публикации. Прогресс считается автоматически по данным вашего аккаунта.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-3">
@@ -88,15 +126,19 @@ export default async function OnboardingPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4" />
-            После онбординга
+            Дальше
           </CardTitle>
           <CardDescription>
-            Перейдите в календарь, поставьте расписание и запустите очередь публикаций.
+            Аналитика по вашим постам и расписанию — на дашборде и в разделе «Аналитика». Охваты из соцсетей подтягиваются
+            по мере подключения API провайдеров (в развитии).
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-2">
           <Button asChild variant="outline">
-            <Link href="/dashboard/calendar">Открыть календарь</Link>
+            <Link href="/dashboard/calendar">Календарь</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/dashboard/analytics">Аналитика</Link>
           </Button>
         </CardContent>
       </Card>

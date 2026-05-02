@@ -6,6 +6,10 @@ declare const process: {
 
 const prisma = new PrismaClient()
 
+/**
+ * Dev/демо-наполнение. Удаление тестового пользователя: `npm run db:delete-test-users`
+ * (по умолчанию email `creator@creativestudio.com`, см. `scripts/delete-test-users.cjs`).
+ */
 async function main() {
   // Create a user
   const user = await prisma.user.create({

@@ -16,6 +16,8 @@ export const generateTextInputSchema = z.object({
   autoHashtags: z.boolean().default(true),
   enableRecycle: z.boolean().default(false),
   recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
+  /** Встроенный шаблон ниши; передаётся в server action вместе с формой. */
+  templateId: z.string().min(1).max(80).optional(),
 })
 
 export type GenerateTextInput = z.input<typeof generateTextInputSchema>

@@ -8,6 +8,8 @@
     "dev": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
     "prisma:gen": "node -e \"require('dotenv').config({ path: '.env.local' })\" && npx prisma generate",
     "prisma:push": "node -e \"require('dotenv').config({ path: '.env.local' })\" && npx prisma db push",
+    "workspace:backfill": "node -e \"require('dotenv').config({ path: '.env.local' })\" && node scripts/backfill-workspaces.cjs",
+    "db:delete-test-users": "node -e \"require('dotenv').config({ path: '.env.local' })\" && node scripts/delete-test-users.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

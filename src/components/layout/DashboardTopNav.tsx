@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 
 const navItems = [
   { href: '/dashboard', label: 'Главная' },
+  { href: '/dashboard/workspace', label: 'Команда' },
   { href: '/dashboard/brands', label: 'Бренды' },
   { href: '/dashboard/generate', label: 'Генерация' },
   { href: '/dashboard/calendar', label: 'Календарь' },
