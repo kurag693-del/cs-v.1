@@ -69,6 +69,7 @@
     "react-hook-form": "^7.73.1",
     "stripe": "^22.1.0",
     "tailwind-merge": "^3.5.0",
+    "undici": "^6.25.0",
     "zod": "^4.3.6"
   }
 }

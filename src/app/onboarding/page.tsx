@@ -4,6 +4,7 @@ import { Building2, CheckCircle2, Circle, Sparkles, Users } from 'lucide-react'
 
 import { validateSession } from '@/lib/auth/lucia'
 import { getOnboardingProgress } from '@/lib/onboarding/actions'
+import { ensurePersonalWorkspace } from '@/lib/workspace/actions'
 import { TemplateSelector } from '@/components/features/TemplateSelector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,8 @@ export default async function OnboardingPage() {
   if (!user) {
     redirect('/login')
   }
+
+  await ensurePersonalWorkspace(user.id)
 
   const progressResult = await getOnboardingProgress(user.id)
   if (!progressResult.success) {

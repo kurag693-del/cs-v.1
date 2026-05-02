@@ -100,3 +100,16 @@ export async function getOnboardingProgress(
     },
   }
 }
+
+/**
+ * Куда вести после успешного входа: незавершённый онбординг → страница знакомства с продуктом.
+ * Предпочтительно вызывать сессию и прогресс в одном server action (`signInWithEmailAndNextPath`),
+ * иначе возможна гонка: второй запрос без cookie и увод на /dashboard.
+ */
+export async function getPostLoginRedirect(): Promise<'/onboarding' | '/dashboard'> {
+  const { user } = await validateSession()
+  if (!user) return '/dashboard'
+  const progress = await getOnboardingProgress(user.id)
+  if (!progress.success || progress.data.isCompleted) return '/dashboard'
+  return '/onboarding'
+}

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { GenerationTask } from '@/lib/ai/router'
+import { bodyMinCharsFromMaxPostLength } from '@/lib/generate/content-length-policy'
 
 export type PromptBuildInput = {
   topic: string
@@ -244,7 +245,7 @@ export function buildPrompt(
     platform: input.platform,
     brand_voice_json: JSON.stringify(brandVoice ?? {}, null, 2),
     max_length_chars: input.maxLength.toString(),
-    min_length_chars: Math.max(300, Math.floor(input.maxLength * 0.6)).toString(),
+    min_length_chars: bodyMinCharsFromMaxPostLength(input.maxLength).toString(),
     include_hashtags: 'true',
     cta_type: 'оставь комментарий',
     avoid_phrases: '["в современном мире", "уникальный контент", "инновационный подход", "цифровая эпоха"]',

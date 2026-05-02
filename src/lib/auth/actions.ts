@@ -8,6 +8,7 @@ import { z } from 'zod'
 
 import { createSession, invalidateSession } from '@/lib/auth/lucia'
 import { prisma } from '@/lib/db/prisma'
+import { getOnboardingProgress } from '@/lib/onboarding/actions'
 
 const registerSchema = z.object({
   email: z.string().email('Некорректный email'),
@@ -85,6 +86,28 @@ export async function logoutUser() {
 // Backward-compatible aliases used by existing UI code.
 export async function signInWithEmail(email: string, password: string) {
   return loginUser(email, password)
+}
+
+/**
+ * Один server action: cookie сессии и решение о маршруте в одном запросе.
+ * Два отдельных вызова (вход + getPostLoginRedirect) дают гонку: второй запрос
+ * иногда приходит без cookie и пользователь уходит на /dashboard вместо /onboarding.
+ */
+export async function signInWithEmailAndNextPath(
+  email: string,
+  password: string
+): Promise<
+  | { success: true; user: { id: string; email: string; name: string | null }; redirectTo: '/onboarding' | '/dashboard' }
+  | { success: false; error: string }
+> {
+  const result = await loginUser(email, password)
+  if (!result.success) {
+    return { success: false, error: result.error }
+  }
+  const progress = await getOnboardingProgress(result.user.id)
+  const redirectTo: '/onboarding' | '/dashboard' =
+    progress.success && !progress.data.isCompleted ? '/onboarding' : '/dashboard'
+  return { success: true, user: result.user, redirectTo }
 }
 
 export async function signOut() {

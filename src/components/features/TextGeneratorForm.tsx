@@ -561,18 +561,48 @@ export function TextGeneratorForm({
                                 disabled={isGenerating || noAiProviders}
                                 onClick={() => field.onChange(preset.value)}
                                 className={cn(
-                                  "flex flex-col gap-1 rounded-lg border p-3 text-left text-sm transition-colors",
-                                  "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  "relative flex flex-col gap-2 rounded-xl border-2 p-3.5 text-left text-sm transition-all duration-200",
+                                  "hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                                   isActive
-                                    ? "border-primary bg-primary/5 shadow-sm"
-                                    : "border-border bg-card",
+                                    ? "border-primary bg-primary/10 shadow-[var(--shadow-sm)] ring-2 ring-primary/35 ring-offset-2 ring-offset-background"
+                                    : "border-border/80 bg-card hover:border-muted-foreground/25",
                                   (isGenerating || noAiProviders) && "pointer-events-none opacity-60"
                                 )}
                               >
-                                <span className="font-medium leading-snug">{preset.title}</span>
-                                <span className="text-muted-foreground text-xs leading-relaxed">
+                                <div className="flex items-start justify-between gap-3">
+                                  <span
+                                    className={cn(
+                                      "leading-snug",
+                                      isActive ? "font-semibold text-foreground" : "font-medium text-foreground/90"
+                                    )}
+                                  >
+                                    {preset.title}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                                      isActive
+                                        ? "border-primary bg-primary text-primary-foreground shadow-[var(--shadow-xs)]"
+                                        : "border-muted-foreground/25 bg-muted/50"
+                                    )}
+                                    aria-hidden
+                                  >
+                                    {isActive ? (
+                                      <Check className="h-4 w-4" strokeWidth={2.75} />
+                                    ) : null}
+                                  </span>
+                                </div>
+                                <span
+                                  className={cn(
+                                    "text-xs leading-relaxed",
+                                    isActive ? "text-foreground/85" : "text-muted-foreground"
+                                  )}
+                                >
                                   {preset.description}
                                 </span>
+                                {isActive ? (
+                                  <span className="sr-only">Выбрано</span>
+                                ) : null}
                               </button>
                             );
                           })}

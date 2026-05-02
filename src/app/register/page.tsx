@@ -1,61 +1,48 @@
-'use client'
+"use client";
 
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import { ArrowRight, Sparkles } from 'lucide-react'
+import Link from "next/link";
+import { type FormEvent, useState } from "react";
+import { ArrowRight, Sparkles } from "lucide-react";
+
+import { registerUser } from "@/lib/auth/actions";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export default function RegisterPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-    setSuccess(null)
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match')
-      setLoading(false)
-      return
+      setError("Пароли не совпадают");
+      setLoading(false);
+      return;
     }
 
-    try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
-      const result = await response.json()
-
-      if (result.success) {
-        setSuccess(result.data?.message || 'Registration successful!')
-        setEmail('')
-        setPassword('')
-        setConfirmPassword('')
-        setTimeout(() => {
-          router.push('/login')
-        }, 2000)
-      } else {
-        setError(result.error?.message || 'Registration failed')
-      }
-    } catch {
-      setError('Network error while registering')
-    } finally {
-      setLoading(false)
+    const result = await registerUser(email, password);
+    if (!result.success) {
+      setError(result.error);
+      setLoading(false);
+      return;
     }
-  }
+
+    localStorage.setItem(
+      "local-auth-user",
+      JSON.stringify({ id: result.user.id, email: result.user.email })
+    );
+    setLoading(false);
+    window.location.assign("/onboarding");
+  };
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
@@ -68,16 +55,16 @@ export default function RegisterPage() {
             <div className="space-y-3">
               <h1 className="text-4xl font-bold tracking-[-0.03em]">Создайте аккаунт</h1>
               <p className="text-[0.9375rem] text-muted-foreground">
-                Запустите creator-first AI studio для генерации, планирования и публикации контента.
+                После регистрации откроется онбординг: пространство, бренд, первые шаги в генераторе и календаре.
               </p>
             </div>
             <div className="rounded-2xl border border-border bg-secondary p-4">
               <p className="inline-flex items-center gap-2 text-[0.875rem] font-medium">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Быстрый онбординг
+                Онбординг сразу после входа
               </p>
               <p className="mt-1 text-[0.8125rem] text-muted-foreground">
-                Бренд, генерация с шаблоном ниши, календарь — по шагам после входа.
+                Не нужно искать раздел вручную — проведём по продукту по шагам.
               </p>
             </div>
           </CardContent>
@@ -85,8 +72,8 @@ export default function RegisterPage() {
 
         <Card className="w-full rounded-3xl border-border bg-card">
           <CardHeader>
-            <CardTitle className="text-2xl text-center">Create Account</CardTitle>
-            <CardDescription className="text-center">Join Креатив-студия today</CardDescription>
+            <CardTitle className="text-center text-2xl">Регистрация</CardTitle>
+            <CardDescription className="text-center">Креатив-студия — контент для соцсетей с ИИ</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -95,55 +82,58 @@ export default function RegisterPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="your@email.com"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
+                  autoComplete="email"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Пароль</Label>
                 <Input
                   id="password"
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="Не менее 8 символов"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  minLength={8}
                   disabled={loading}
+                  autoComplete="new-password"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <Label htmlFor="confirmPassword">Пароль ещё раз</Label>
                 <Input
                   id="confirmPassword"
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="Повторите пароль"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   disabled={loading}
+                  autoComplete="new-password"
                 />
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              {success && <p className="text-sm text-green-600">{success}</p>}
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Creating...' : 'Sign Up'}
+                {loading ? "Создаём аккаунт…" : "Зарегистрироваться"}
                 {!loading ? <ArrowRight className="h-4 w-4" /> : null}
               </Button>
             </form>
           </CardContent>
           <CardFooter className="flex justify-center">
             <p className="text-sm text-muted-foreground">
-              Already have an account?{' '}
+              Уже есть аккаунт?{" "}
               <Link href="/login" className="text-primary hover:underline">
-                Sign in
+                Войти
               </Link>
             </p>
           </CardFooter>
         </Card>
       </div>
     </div>
-  )
+  );
 }

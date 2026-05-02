@@ -67,7 +67,10 @@ export function validateGeneratedContent(generated: GeneratedValidationInput, mi
   }
 
   if (generated.body.trim().length < minLength) {
-    return { valid: false, message: `Слишком короткий текст: минимум ${minLength} символов в body` }
+    return {
+      valid: false,
+      message: `Текст основной части поста короче требуемого (${minLength} символов при вашем лимите длины). Повторите генерацию или уменьшите поле «Максимальная длина» в форме.`,
+    }
   }
 
   const fullText = `${generated.hook}\n${generated.body}\n${generated.cta}`.toLowerCase()

@@ -1,11 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 
-import { signInWithEmail } from "@/lib/auth/actions";
+import { signInWithEmailAndNextPath } from "@/lib/auth/actions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,7 +24,7 @@ export default function LoginPage() {
     setError(null);
     setSuccess(false);
 
-    const result = await signInWithEmail(email, password);
+    const result = await signInWithEmailAndNextPath(email, password);
     if (!result.success) {
       setError(result.error);
       setLoading(false);
@@ -34,12 +32,12 @@ export default function LoginPage() {
     }
     localStorage.setItem(
       "local-auth-user",
-      JSON.stringify({ id: result.user?.id, email: result.user?.email ?? email })
+      JSON.stringify({ id: result.user.id, email: result.user.email ?? email })
     );
 
     setSuccess(true);
     setLoading(false);
-    window.location.assign("/dashboard");
+    window.location.assign(result.redirectTo);
   };
 
   return (

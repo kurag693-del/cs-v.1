@@ -14,6 +14,7 @@ import {
 } from '@/lib/ai/model-catalog'
 import type { AIProviderId } from '@/lib/ai/providers/types'
 import { prisma } from '@/lib/db'
+import { bodyMinCharsFromMaxPostLength } from '@/lib/generate/content-length-policy'
 import { buildPrompt, parseGenerationFromText, type PromptBuildInput } from '@/lib/generate/prompt-utils'
 import { moderator } from '@/lib/ai/moderation'
 import { calculateCost, trackTokenUsage } from '@/lib/ai/utils'
@@ -463,7 +464,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
 
     const estimatedTokens = aiProvider.estimateTokens({ prompt: enhancedPrompt, maxTokens: maxOutTokens })
     const estimatedCost = calculateCost(estimatedTokens, textModelForRun)
-    const minLength = Math.max(300, Math.floor(maxLength * 0.6))
+    const minLength = bodyMinCharsFromMaxPostLength(maxLength)
 
     const generation = await prisma.generation.create({
       data: {

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AuthProvider } from "@/lib/auth/hooks";
 import { validateSession } from "@/lib/auth/lucia";
+import { getOnboardingProgress } from "@/lib/onboarding/actions";
 import { DashboardTopNav } from "@/components/layout/DashboardTopNav";
 import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 import { MobileSidebar, Sidebar } from "@/components/layout/Sidebar";
@@ -13,6 +14,11 @@ export default async function DashboardLayout({
 }) {
   const { user } = await validateSession();
   if (!user) redirect("/login");
+
+  const onboarding = await getOnboardingProgress(user.id);
+  if (onboarding.success && !onboarding.data.isCompleted) {
+    redirect("/onboarding");
+  }
 
   return (
     <AuthProvider>

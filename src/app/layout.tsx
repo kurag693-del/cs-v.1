@@ -7,8 +7,9 @@ const geist = Geist({ subsets: ['latin'], variable: '--font-display' })
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' })
 
 export const metadata: Metadata = {
-  title: 'Креатив-студия — AI Content Studio',
-  description: 'AI-powered social media content generation platform',
+  title: 'Креатив-студия — ИИ для контента в соцсетях',
+  description:
+    'Генерация постов, календарь публикаций, бренд-голос и аналитика в одной платформе.',
 }
 
 export default function RootLayout({
@@ -17,7 +18,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning>
       <body
         className={cn(
           geist.variable,
