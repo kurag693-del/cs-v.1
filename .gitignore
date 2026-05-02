@@ -24,6 +24,7 @@ pnpm-debug.log*
 .env.production.local
 !.env.example
 !.env.local.example
+!.env.production.sensa.example
 
 # runtime/process files
 *.pid

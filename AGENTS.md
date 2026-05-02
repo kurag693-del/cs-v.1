@@ -1,7 +1,7 @@
 # .cursorrules
 ## PROJECT CONTEXT
 You are a senior full-stack architect building "Креатив-студия" – an AI-powered social media content studio.
-Stack: Next.js 14+ (App Router), TypeScript (strict), Tailwind CSS, shadcn/ui, PostgreSQL, Prisma ORM, Lucia (сессии), Zod, OpenRouter/провайдеры LLM, Vercel, Vitest/Playwright.
+Stack: Next.js 14+ (App Router), TypeScript (strict), Tailwind CSS, shadcn/ui, PostgreSQL, Prisma ORM, сессии в БД (cookie + модель `Session`, без пакета lucia), Zod, OpenRouter/провайдеры LLM, Vercel, Vitest/Playwright.
 
 ## CORE CODE RULES
 1. TypeScript: `strict: true` always. No `any`. Use explicit interfaces, discriminate unions, and `satisfies`.
@@ -11,7 +11,7 @@ Stack: Next.js 14+ (App Router), TypeScript (strict), Tailwind CSS, shadcn/ui, P
 5. API/Validation: Validate ALL inputs with Zod at every boundary (client, server, AI). Return `{ success: boolean, data?: T, error?: { code: string, message: string } }`.
 6. DB: PostgreSQL + Prisma. Use Prisma types and схему в `prisma/schema.prisma`. Soft-delete with `deletedAt`. Include `createdAt`, `updatedAt`. RLS на уровне БД — опционально, не в критическом пути приложения.
 7. AI Integration: Route via LiteLLM. Implement retry/fallback. NEVER expose keys. Sanitize prompts. Log token cost. Cache frequent generations.
-8. Security: CSP headers, защита маршрутов (сессия Lucia / middleware), no PII in logs, input/output moderation, rate-limiting on public routes.
+8. Security: CSP headers, защита маршрутов (cookie-сессия Prisma / middleware), no PII in logs, input/output moderation, rate-limiting on public routes.
 
 ## AI INTERACTION PROTOCOL
 - BEFORE coding: Ask for missing context or clarify ambiguity. Never assume API shapes; сверяйтесь с Prisma-схемой и существующими Zod-схемами.
@@ -42,7 +42,7 @@ Stack: Next.js 14+ (App Router), TypeScript (strict), Tailwind CSS, shadcn/ui, P
 - **Frontend:** Next.js 14+ (App Router), React 18+, TypeScript, Tailwind, shadcn/ui, Zustand
 - **Backend:** Next.js Server Actions / Route Handlers (Node.js)
 - **Database:** PostgreSQL (хостинг по выбору: Neon, Railway, облачный VPS и т.д.), Prisma ORM
-- **Auth:** Lucia (сессии в БД, cookie), email/пароль и пр. через ваши route handlers, защита в `middleware.ts`
+- **Auth:** Cookie-сессии (`Session` в Prisma, см. `src/lib/auth/lucia.ts`), вход через route handlers / server actions, защита в `middleware.ts`
 - **AI/LLM:** OpenRouter и/или встроенные провайдеры (GigaChat, YandexGPT, …). Upstash/Redis — по необходимости для очереди и кэша.
 - **Media storage:** S3-совместимое хранилище (облако с S3 API), не привязка к одному вендору.
 - **Infra:** Vercel или Node-хостинг (FE/API), Upstash Redis (опционально), Sentry (опционально), Stripe/ЮKassa (биллинг, фаза 7)
