@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  closestCorners,
   DndContext,
   DragOverlay,
   type DragEndEvent,
@@ -17,6 +18,7 @@ import { type ContentStatus, type Platform } from '@prisma/client'
 import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { getApprovalStatus } from '@/lib/approval/workflow'
 import { schedulePost } from '@/lib/posts/actions'
 import { DraggablePostCard } from '@/components/features/DraggablePostCard'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -56,6 +58,8 @@ type PostCalendarProps = {
   }>
   onPostClick?: (post: { id: string; title: string; platform: string; status: string; scheduledAt: string | Date | null }) => void
   onPostScheduled?: () => void
+  /** Открыть отдельное окно согласования (кнопка на карточке, без конфликта с drag). */
+  onOpenPostApproval?: (postId: string) => void
 }
 
 type DayColumnProps = {
@@ -64,6 +68,7 @@ type DayColumnProps = {
   posts: CalendarPost[]
   publishTimes: Record<string, string>
   onPublishTimeChange: (postId: string, value: string) => void
+  onOpenPostApproval?: (postId: string) => void
 }
 
 function isDayId(value: string): boolean {
@@ -76,7 +81,7 @@ function getMetadataTitle(metadata: unknown): string {
   return typeof maybeTitle === 'string' ? maybeTitle : ''
 }
 
-function DayColumn({ dayId, label, posts, publishTimes, onPublishTimeChange }: DayColumnProps) {
+function DayColumn({ dayId, label, posts, publishTimes, onPublishTimeChange, onOpenPostApproval }: DayColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: dayId })
 
   return (
@@ -97,6 +102,7 @@ function DayColumn({ dayId, label, posts, publishTimes, onPublishTimeChange }: D
               post={post}
               publishTime={publishTimes[post.id] ?? '09:00'}
               onPublishTimeChange={onPublishTimeChange}
+              onOpenApproval={onOpenPostApproval ? () => onOpenPostApproval(post.id) : undefined}
             />
           ))
         )}
@@ -118,7 +124,7 @@ function normalizeScheduleToFuture(isoDate: string): { iso: string; wasAdjusted:
     return { iso: isoDate, wasAdjusted: false }
   }
 
-  const minAllowed = addMinutes(new Date(), 5)
+  const minAllowed = addMinutes(new Date(), 1)
   if (parsed > minAllowed) {
     return { iso: parsed.toISOString(), wasAdjusted: false }
   }
@@ -138,7 +144,7 @@ function buildLocalScheduleIso(dayId: string, hours: number, minutes: number): s
   return localDate.toISOString()
 }
 
-export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled }: PostCalendarProps) {
+export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled, onOpenPostApproval }: PostCalendarProps) {
   const { toast } = useToast()
   const sourcePosts = initialPosts ?? legacyPosts ?? []
   const [posts, setPosts] = useState<CalendarPost[]>(
@@ -196,6 +202,10 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
   }, [weekOffset])
 
   const unscheduledPosts = useMemo(() => posts.filter((post) => !post.scheduledAt), [posts])
+  const unscheduledNeedApproval = useMemo(
+    () => unscheduledPosts.some((post) => getApprovalStatus(post.metadata) !== 'APPROVED'),
+    [unscheduledPosts]
+  )
   const activePost = useMemo(
     () => (activePostId ? posts.find((post) => post.id === activePostId) ?? null : null),
     [activePostId, posts]
@@ -266,7 +276,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
       if (normalized.wasAdjusted) {
         toast({
           title: 'Время скорректировано',
-          description: 'Для публикации на сегодня время автоматически сдвинуто вперед (минимум +5 минут).',
+          description: 'Для публикации на сегодня время автоматически сдвинуто вперёд (не ранее чем через 1 минуту).',
         })
       }
       return
@@ -323,7 +333,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
       if (normalized.wasAdjusted) {
         toast({
           title: 'Время скорректировано',
-          description: 'Выбрано прошедшее время. Установлено ближайшее допустимое (+5 минут).',
+          description: 'Выбрано прошедшее время. Установлено ближайшее допустимое (через 1 минуту).',
         })
       }
       return
@@ -352,6 +362,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
 
       <DndContext
         sensors={sensors}
+        collisionDetection={closestCorners}
         autoScroll={false}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
@@ -380,9 +391,18 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
                 <CardTitle className="text-base">Очередь контента (без даты)</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Перетащите карточку в день недели, чтобы запланировать публикацию.
-                </p>
+                <div className="mb-3 space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    Перетащите карточку на блок с нужным днём — пост получит дату и время (см. поле «Время» на карточке). Статус
+                    согласования меняйте кнопкой «Согласование» на карточке или через «Согласование постов» в шапке страницы.
+                  </p>
+                  {unscheduledNeedApproval ? (
+                    <p className="text-amber-700 dark:text-amber-500">
+                      Планирование возможно только для постов со статусом одобрения APPROVED. Иначе перенос в календарь будет
+                      отклонён сервером — сначала пройдите согласование.
+                    </p>
+                  ) : null}
+                </div>
                 <div className="space-y-2">
                   {unscheduledPosts.map((post) => (
                     <DraggablePostCard
@@ -390,6 +410,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
                       post={post}
                       publishTime={publishTimes[post.id] ?? '09:00'}
                       onPublishTimeChange={handlePublishTimeChange}
+                      onOpenApproval={onOpenPostApproval ? () => onOpenPostApproval(post.id) : undefined}
                     />
                   ))}
                 </div>
@@ -411,6 +432,7 @@ export function PostCalendar({ initialPosts, posts: legacyPosts, onPostScheduled
                   posts={dayPosts}
                   publishTimes={publishTimes}
                   onPublishTimeChange={handlePublishTimeChange}
+                  onOpenPostApproval={onOpenPostApproval}
                 />
               )
             })}

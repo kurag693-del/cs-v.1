@@ -2,7 +2,8 @@
 
 import { useSession } from '@/lib/auth/hooks'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { PostApprovalDialog } from '@/components/features/PostApprovalDialog'
 import { PostCalendar } from '@/components/features/PostCalendar'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,13 +11,12 @@ import { useToast } from '@/components/ui/use-toast'
 import { getCalendarPostsWithFilters } from '@/lib/posts/actions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CalendarRange, Clock3, Download, GripVertical, ListFilter, Send } from 'lucide-react'
+import { CalendarRange, Clock3, Download, FileCheck, GripVertical, ListFilter, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getBrands } from '@/lib/brands/actions'
 import { type ContentStatus, type Platform } from '@prisma/client'
 import { getApprovalStatus } from '@/lib/approval/workflow'
-import { approvePost, rejectPost, requestPostApproval } from '@/lib/approval/actions'
 
 type ViewMode = 'week' | 'list'
 type CalendarStatusFilter = ContentStatus | 'ALL'
@@ -44,6 +44,8 @@ export default function CalendarPage() {
   const [brandFilter, setBrandFilter] = useState<string>('ALL')
   const [approvalFilter, setApprovalFilter] = useState<CalendarApprovalFilter>('ALL')
   const [currentTime, setCurrentTime] = useState(() => new Date())
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
+  const [approvalInitialPostId, setApprovalInitialPostId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && !user) {
@@ -69,6 +71,12 @@ export default function CalendarPage() {
 
     return () => window.clearInterval(intervalId)
   }, [])
+
+  const reviewPendingCount = useMemo(
+    () =>
+      posts.filter((post) => getApprovalStatus((post as Record<string, unknown>).metadata) === 'REVIEW_PENDING').length,
+    [posts]
+  )
 
   const fetchPosts = async (
     userId: string,
@@ -194,7 +202,8 @@ export default function CalendarPage() {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `dzen-export-${String(post.id ?? Date.now())}.md`
+    const baseName = post.id != null && String(post.id).length > 0 ? String(post.id) : 'draft'
+    link.download = `dzen-export-${baseName}.md`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -272,6 +281,25 @@ export default function CalendarPage() {
                   )
                 })}
               </div>
+
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-2"
+                onClick={() => {
+                  setApprovalInitialPostId(null)
+                  setApprovalDialogOpen(true)
+                }}
+              >
+                <FileCheck className="h-4 w-4 shrink-0" />
+                <span className="hidden sm:inline">Согласование постов</span>
+                <span className="sm:hidden">Согласование</span>
+                {reviewPendingCount > 0 ? (
+                  <Badge variant="destructive" className="min-w-6 px-1.5 text-[0.6875rem]">
+                    {reviewPendingCount}
+                  </Badge>
+                ) : null}
+              </Button>
 
               <Button
                 variant="outline"
@@ -393,6 +421,25 @@ export default function CalendarPage() {
         </CardContent>
       </Card>
 
+      <PostApprovalDialog
+        open={approvalDialogOpen}
+        onOpenChange={(nextOpen) => {
+          setApprovalDialogOpen(nextOpen)
+          if (!nextOpen) {
+            setApprovalInitialPostId(null)
+          }
+        }}
+        posts={posts}
+        initialPostId={approvalInitialPostId}
+        onCompleted={async () => {
+          await fetchPosts(user.id, {
+            status: statusFilter,
+            platform: platformFilter,
+            brandId: brandFilter,
+          })
+        }}
+      />
+
       {publishJobsProcessed !== null && (
         <p className="text-[0.875rem] text-muted-foreground">Обработано задач публикации: {publishJobsProcessed}</p>
       )}
@@ -416,8 +463,9 @@ export default function CalendarPage() {
                   brandId: brandFilter,
                 })
               }
-              onPostClick={(post) => {
-                console.log('Post clicked:', post)
+              onOpenPostApproval={(postId) => {
+                setApprovalInitialPostId(postId)
+                setApprovalDialogOpen(true)
               }}
             />
           </CardContent>
@@ -471,74 +519,19 @@ export default function CalendarPage() {
                         Экспорт в Дзен
                       </Button>
                     ) : null}
-                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'DRAFT' ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                          const res = await requestPostApproval(String(post.id))
-                          if (!res.success) {
-                            toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
-                            return
-                          }
-                          await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
-                          toast({ title: 'На согласовании', description: 'Пост отправлен на approval' })
-                        }}
-                      >
-                        На согласование
-                      </Button>
-                    ) : null}
-                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'REVIEW_PENDING' ? (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            const res = await approvePost(String(post.id))
-                            if (!res.success) {
-                              toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
-                              return
-                            }
-                            await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
-                            toast({ title: 'Одобрено', description: 'Пост можно планировать и публиковать' })
-                          }}
-                        >
-                          Одобрить
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            const res = await rejectPost(String(post.id), 'Отклонено вручную')
-                            if (!res.success) {
-                              toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
-                              return
-                            }
-                            await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
-                            toast({ title: 'Отклонено', description: 'Пост возвращен в доработку' })
-                          }}
-                        >
-                          Отклонить
-                        </Button>
-                      </>
-                    ) : null}
-                    {getApprovalStatus((post as Record<string, unknown>).metadata) === 'REJECTED' ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={async () => {
-                          const res = await requestPostApproval(String(post.id))
-                          if (!res.success) {
-                            toast({ title: 'Ошибка', description: res.error, variant: 'destructive' })
-                            return
-                          }
-                          await fetchPosts(user.id, { status: statusFilter, platform: platformFilter, brandId: brandFilter })
-                          toast({ title: 'Повторное согласование', description: 'Пост снова отправлен на approval' })
-                        }}
-                      >
-                        Повторно на согласование
-                      </Button>
-                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => {
+                        setApprovalInitialPostId(String(post.id))
+                        setApprovalDialogOpen(true)
+                      }}
+                    >
+                      <FileCheck className="h-3.5 w-3.5" />
+                      Согласование
+                    </Button>
                   </div>
                 </div>
               ))

@@ -90,7 +90,13 @@ describe('publish DLQ fallback', () => {
       id: 'post-1',
       content: 'text',
       mediaUrls: [],
-      metadata: {},
+      metadata: {
+        approval: {
+          status: 'APPROVED',
+          updatedAt: '2028-01-01T00:00:00.000Z',
+          updatedBy: 'user-1',
+        },
+      },
       platform: 'TELEGRAM',
       brandId: 'brand-1',
       status: 'SCHEDULED',

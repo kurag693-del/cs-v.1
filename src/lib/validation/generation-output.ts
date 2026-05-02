@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 const FORBIDDEN_TEMPLATE_PHRASES = ['в современном мире', 'уникальный контент', 'инновационный подход', 'цифровая эпоха'] as const
 
+const DEFAULT_CTA_IF_EMPTY = 'Напишите в комментариях — обсудим вместе!'
+
 export const generatedJsonSchema = z.object({
   hook: z.string().trim().min(1, 'Хук обязателен'),
   body: z.string().trim().min(300, 'Generated body is too short'),
@@ -24,7 +26,10 @@ export const generatedJsonSchema = z.object({
       }
       return []
     }),
-  cta: z.string().trim().min(1, 'CTA обязателен'),
+  cta: z
+    .string()
+    .trim()
+    .transform((value) => (value.length > 0 ? value : DEFAULT_CTA_IF_EMPTY)),
 })
 
 export type GeneratedContent = z.infer<typeof generatedJsonSchema>

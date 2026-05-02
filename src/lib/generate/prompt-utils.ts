@@ -8,6 +8,8 @@ export type PromptBuildInput = {
   contentType: 'post' | 'story' | 'tips' | 'announcement'
   toneOverride: 'brand' | 'humor' | 'formal'
   includeEmojis: boolean
+  /** 2–3 = один запрос к модели, в ответе массив variants */
+  variantsCount?: 1 | 2 | 3
 }
 
 type ParsedGenerated = { hook: string; body: string; hashtags: string[]; cta: string }
@@ -25,7 +27,7 @@ const REQUIRED_PLACEHOLDERS = [
   'include_emojis',
 ] as const
 
-function sanitizeHashtags(value: unknown): string[] {
+export function sanitizeHashtags(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return Array.from(
     new Set(
@@ -56,6 +58,34 @@ function decodeJsonLikeString(value: string): string {
     .replace(/\\\\/g, '\\')
 }
 
+const DEFAULT_CTA_FALLBACK = 'Напишите в комментариях — обсудим вместе!'
+
+function textAfterJsonBlock(raw: string): string {
+  const end = raw.lastIndexOf('}')
+  if (end < 0) return raw
+  return raw.slice(end + 1)
+}
+
+function extractHashtagsFromTail(raw: string): string[] {
+  const tail = textAfterJsonBlock(raw)
+  const tags = tail.match(/#[\p{L}\p{N}_]+/gu) ?? []
+  return sanitizeHashtags(tags)
+}
+
+function extractCtaFromTail(raw: string): string {
+  const tail = textAfterJsonBlock(raw).trim()
+  if (!tail) return DEFAULT_CTA_FALLBACK
+  const lines = tail
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const nonTagLine = lines.find((line) => !line.startsWith('#'))
+  if (nonTagLine && nonTagLine.length >= 8) {
+    return nonTagLine
+  }
+  return DEFAULT_CTA_FALLBACK
+}
+
 function parseJsonLikeResponse(raw: string): ParsedGenerated | null {
   const hookMatch = raw.match(/"hook"\s*:\s*"([\s\S]*?)"\s*,\s*"body"/i)
   const bodyMatch = raw.match(/"body"\s*:\s*"([\s\S]*?)"\s*,\s*"hashtags"/i)
@@ -71,10 +101,19 @@ function parseJsonLikeResponse(raw: string): ParsedGenerated | null {
 
   const hook = stripMarkdown(decodeJsonLikeString(hookMatch[1] ?? '')).trim()
   const body = stripMarkdown(decodeJsonLikeString(bodyMatch[1] ?? '')).trim()
-  const cta = stripMarkdown(decodeJsonLikeString(ctaMatch[1] ?? '')).trim()
-  const hashtags = sanitizeHashtags(hashtagMatches)
+  let cta = stripMarkdown(decodeJsonLikeString(ctaMatch[1] ?? '')).trim()
+  let hashtags = sanitizeHashtags(hashtagMatches)
+  if (!cta) {
+    cta = extractCtaFromTail(raw)
+  }
+  if (hashtags.length === 0) {
+    hashtags = extractHashtagsFromTail(raw)
+  }
+  if (!cta) {
+    cta = DEFAULT_CTA_FALLBACK
+  }
 
-  if (!hook || !body || !cta) {
+  if (!hook || !body) {
     return null
   }
 
@@ -104,9 +143,19 @@ export function parseGenerationFromText(raw: string): ParsedGenerated {
       const hook = typeof parsed.hook === 'string' ? stripMarkdown(parsed.hook) : ''
       const body = typeof parsed.body === 'string' ? stripMarkdown(parsed.body) : ''
       const cta = typeof parsed.cta === 'string' ? stripMarkdown(parsed.cta) : ''
-      const hashtags = sanitizeHashtags(parsed.hashtags)
-      if (hook && body && cta) {
-        return { hook, body, cta, hashtags }
+      let hashtags = sanitizeHashtags(parsed.hashtags)
+      let effectiveCta = cta.trim()
+      if (!effectiveCta) {
+        effectiveCta = extractCtaFromTail(normalizedRaw)
+      }
+      if (!effectiveCta) {
+        effectiveCta = DEFAULT_CTA_FALLBACK
+      }
+      if (hashtags.length === 0) {
+        hashtags = extractHashtagsFromTail(normalizedRaw)
+      }
+      if (hook && body) {
+        return { hook, body, cta: effectiveCta, hashtags }
       }
     } catch {
       // fallback to plain-text parser
@@ -202,16 +251,74 @@ export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, 
     throw new Error('Шаблон содержит незамененные плейсхолдеры')
   }
 
+  const multi =
+    input.variantsCount === 2 || input.variantsCount === 3
+      ? `
+
+## Multi-variant (ОБЯЗАТЕЛЬНО для этого запроса)
+Верни **один** JSON-объект с корневым полем \`variants\`: массив из **ровно ${input.variantsCount}** объектов-постов.
+Порядок в массиве: [0] = вариант A, [1] = вариант B${input.variantsCount === 3 ? ', [2] = вариант C' : ''}.
+Каждый элемент содержит те же поля, что и обычный пост: hook, body, hashtags, cta; при необходимости platform_specific_notes, word_count, matches_brand_tone.
+
+Требования к различию:
+- У каждого варианта **другой hook** и **другое начало body**; не повторяй целые предложения между вариантами.
+- Одинаковая тема и платформа, разная подача и аргументация.
+
+Структура ответа (пример):
+\`\`\`json
+{
+  "variants": [
+    { "hook": "...", "body": "...", "hashtags": ["#a"], "cta": "...", "platform_specific_notes": "", "word_count": 0, "matches_brand_tone": true },
+    { "hook": "...", "body": "...", "hashtags": ["#b"], "cta": "..." }
+  ]
+}
+\`\`\`
+`
+      : ''
+
   return `## Critical Runtime Directives
 - Строго используй тип контента: ${contentTypeMap[input.contentType]}.
 - Строго используй тон: ${toneMap[input.toneOverride]}.
 - Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
 
 ${prompt}
+${multi}
 
 ## Runtime Overrides
 - Тип контента: ${contentTypeMap[input.contentType]}
 - Тон: ${toneMap[input.toneOverride]}
 - Эмодзи: ${input.includeEmojis ? 'разрешены, но умеренно' : 'не использовать'}
 `
+}
+
+/**
+ * Второй/третий независимый вызов модели: тот же базовый шаблон + жёсткие анти-дубликаты
+ * с фрагментами уже сгенерированных вариантов.
+ */
+export function buildAlternativeSocialPostPrompt(
+  basePrompt: string,
+  input: { variantLetter: 'B' | 'C'; peerExcerpts: string[] }
+): string {
+  const blocks = input.peerExcerpts
+    .map((excerpt, i) => {
+      const label = String.fromCharCode(65 + i)
+      const clipped = excerpt.trim().slice(0, 520)
+      return `Черновик ${label} (фрагмент — не копируй целиком и не повторяй дословно):\n${clipped}`
+    })
+    .join('\n\n')
+
+  return `${basePrompt}
+
+---
+ОТДЕЛЬНЫЙ ЗАПРОС — ВАРИАНТ ${input.variantLetter}:
+Это новый ответ модели на ту же тему и платформу. Формат выхода — как в инструкции выше (JSON с hook, body, hashtags, cta и др., если требовалось).
+
+Обязательно:
+- Другой hook и иное начало body по смыслу и формулировкам (не перефраз черновика A).
+- Другая структура абзацев и другие примеры там, где уместно.
+- Не повторяй целые предложения из фрагментов ниже.
+
+${blocks}
+
+Верни только ответ в том же формате (JSON), без пояснений до и после.`
 }

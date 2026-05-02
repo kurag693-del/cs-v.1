@@ -11,8 +11,13 @@ describe('phase 8 ai workflows', () => {
 
     expect(variants).toHaveLength(3)
     expect(variants[0]?.id).toBe('A')
-    expect(variants[1]?.content).toContain('Практически:')
-    expect(variants[2]?.content).toContain('Вдохновляюще:')
+    expect(variants[0]?.content).not.toBe(variants[1]?.content)
+    expect(variants[1]?.content).not.toBe(variants[2]?.content)
+    expect(variants[0]?.content).not.toBe(variants[2]?.content)
+    expect(variants[1]?.content).toContain('Вариант B')
+    expect(variants[1]?.content).toContain('По делу:')
+    expect(variants[2]?.content).toContain('Эмоционально:')
+    expect(variants[2]?.content).toContain('【')
   })
 
   it('generates auto hashtags with platform tag', () => {
@@ -31,8 +36,8 @@ describe('phase 8 ai workflows', () => {
 
     expect(recycled).toHaveLength(3)
     expect(recycled.map((item) => item.platform)).toEqual(['Telegram', 'VK', 'Dzen'])
-    expect(recycled[0]?.content).toContain('Telegram-версия')
-    expect(recycled[1]?.content).toContain('VK-версия')
-    expect(recycled[2]?.content).toContain('Dzen-версия')
+    expect(recycled[0]?.content).toContain('Telegram')
+    expect(recycled[1]?.content).toContain('коротко')
+    expect(recycled[2]?.content).toContain('Заголовок-мысль')
   })
 })

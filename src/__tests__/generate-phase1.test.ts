@@ -26,7 +26,9 @@ describe('phase 1 generation hardening', () => {
   })
 
   it('keeps provider registry with required ids', () => {
-    expect(AI_PROVIDER_IDS).toEqual(expect.arrayContaining(['gigachat', 'yandexgpt', 'vkai']))
+    expect(AI_PROVIDER_IDS).toEqual(
+      expect.arrayContaining(['deepseek', 'gigachat', 'yandexgpt'])
+    )
   })
 
   it('fails validation for forbidden template phrases', () => {

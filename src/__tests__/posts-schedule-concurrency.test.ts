@@ -25,6 +25,14 @@ vi.mock('@/lib/auth/lucia', () => ({
 
 import { schedulePost } from '@/lib/posts/actions'
 
+const approvedMetadata = {
+  approval: {
+    status: 'APPROVED' as const,
+    updatedAt: '2028-01-01T00:00:00.000Z',
+    updatedBy: 'user-1',
+  },
+}
+
 describe('schedulePost concurrency behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -39,7 +47,7 @@ describe('schedulePost concurrency behavior', () => {
       id: 'post-1',
       status: 'SCHEDULED',
       scheduledAt: new Date(dateIso),
-      metadata: {},
+      metadata: approvedMetadata,
     })
 
     const first = await schedulePost('post-1', dateIso)
@@ -56,13 +64,13 @@ describe('schedulePost concurrency behavior', () => {
       id: 'post-1',
       status: 'SCHEDULED',
       scheduledAt: new Date('2028-01-01T10:00:00.000Z'),
-      metadata: {},
+      metadata: approvedMetadata,
     })
     prismaMock.post.findFirst.mockResolvedValueOnce({
       id: 'post-1',
       status: 'SCHEDULED',
       scheduledAt: new Date('2028-01-01T10:00:00.000Z'),
-      metadata: {},
+      metadata: approvedMetadata,
     })
 
     const first = await schedulePost('post-1', '2028-01-01T10:00:00.000Z')

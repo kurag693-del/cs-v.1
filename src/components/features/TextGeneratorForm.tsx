@@ -4,8 +4,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, Copy, Loader2, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 
+import type { AIProviderId } from "@/lib/ai/providers/types";
+
+/** Для тестов: в development всегда; в prod — если NEXT_PUBLIC_SHOW_AI_SOURCE=true */
+const SHOW_AI_SOURCE =
+  process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_SHOW_AI_SOURCE === "true";
 import { generateText } from "@/lib/generate/actions";
 import { saveGenerationAsDraft } from "@/lib/posts/actions";
 import { generateTextInputSchema as GenerateTextInputSchema, type GenerateTextInput } from "@/lib/validation/generate";
@@ -31,6 +36,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 
+const AI_PROVIDER_LABELS: Record<AIProviderId, string> = {
+  deepseek: "DeepSeek (с fallback на GigaChat)",
+  yandexgpt: "YandexGPT",
+  gigachat: "GigaChat",
+};
+
 type BrandOption = {
   id: string;
   name: string;
@@ -39,6 +50,10 @@ type BrandOption = {
 type TextGeneratorFormProps = {
   userId: string;
   brands: BrandOption[];
+  /** Провайдеры с заданными ключами в env (серверный расчёт). */
+  availableAiProviders: AIProviderId[];
+  /** Дефолт для формы: предпочтительный из env среди доступных. */
+  defaultAiProvider: AIProviderId;
 };
 
 type GenerateRequestPayload = {
@@ -57,9 +72,15 @@ type GenerateRequestPayload = {
   recycleTargets: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen">;
 };
 
-export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
+export function TextGeneratorForm({
+  userId,
+  brands,
+  availableAiProviders,
+  defaultAiProvider,
+}: TextGeneratorFormProps) {
   const router = useRouter();
   const { toast } = useToast();
+  const noAiProviders = availableAiProviders.length === 0;
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +93,8 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
   const [variants, setVariants] = useState<Array<{ id: "A" | "B" | "C"; label: string; content: string }>>([]);
   const [generatedHashtags, setGeneratedHashtags] = useState<string[]>([]);
   const [recycledPosts, setRecycledPosts] = useState<Array<{ platform: "Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen"; content: string }>>([]);
+  const [lastAiMeta, setLastAiMeta] = useState<{ provider: AIProviderId; model: string } | null>(null);
+  const [selectedVariantId, setSelectedVariantId] = useState<"A" | "B" | "C">("A");
   const recycleTargetOptions: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen"> = [
     "Instagram",
     "Telegram",
@@ -85,7 +108,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     defaultValues: {
       topic: "",
       platform: "Instagram",
-      provider: "gigachat",
+      provider: defaultAiProvider,
       brandId: undefined,
       maxLength: 800,
       contentType: "post",
@@ -99,6 +122,9 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     },
   });
 
+  const enableAbTest = useWatch({ control: form.control, name: "enableAbTest" });
+  const enableRecycle = useWatch({ control: form.control, name: "enableRecycle" });
+
   const runGeneration = async (payload: GenerateRequestPayload) => {
     setIsGenerating(true);
     setError(null);
@@ -107,6 +133,8 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
     setVariants([]);
     setGeneratedHashtags([]);
     setRecycledPosts([]);
+    setLastAiMeta(null);
+    setSelectedVariantId("A");
     setLastRequest(payload);
 
     try {
@@ -133,10 +161,13 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
       setGeneratedHashtags(response.data.hashtags ?? []);
       setRecycledPosts(response.data.recycledPosts ?? []);
       setGenerationId(response.data.generationId);
+      setLastAiMeta({ provider: response.data.provider, model: response.data.model });
       setDraftTitle((current) => current || payload.topic.slice(0, 120));
       toast({
         title: "Черновик готов",
-        description: `Модель: ${response.data.model}`,
+        description: SHOW_AI_SOURCE
+          ? `${AI_PROVIDER_LABELS[response.data.provider]} · ${response.data.model}`
+          : `Модель: ${response.data.model}`,
       });
     } catch (caughtError: unknown) {
       const message =
@@ -221,7 +252,8 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
         userId,
         currentPlatform,
         normalizedTitle,
-        mediaUrls
+        mediaUrls,
+        selectedVariantId
       );
 
       if (!saved.success) {
@@ -258,6 +290,17 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
           <CardDescription>Заполните параметры и получите AI-черновик</CardDescription>
         </CardHeader>
         <CardContent>
+          {noAiProviders ? (
+            <Alert variant="destructive">
+              <AlertTitle>ИИ-провайдеры не настроены</AlertTitle>
+              <AlertDescription>
+                Задайте хотя бы один ключ в{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-xs">.env.local</code> (см.{" "}
+                <code className="rounded bg-muted px-1 py-0.5 text-xs">.env.local.example</code>
+                ): DeepSeek, YandexGPT или GigaChat. После сохранения файла перезапустите dev-сервер.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
               <FormField
@@ -270,7 +313,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                       <Textarea
                         className="min-h-28 w-full resize-none"
                         placeholder="О чем будет ваш пост?"
-                        disabled={isGenerating}
+                        disabled={isGenerating || noAiProviders}
                         {...field}
                       />
                     </FormControl>
@@ -292,7 +335,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                       <Select
                         value={field.value}
                         onValueChange={field.onChange}
-                        disabled={isGenerating}
+                        disabled={isGenerating || noAiProviders}
                       >
                         <FormControl>
                           <SelectTrigger>
@@ -321,7 +364,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                       <Select
                         value={field.value ?? "none"}
                         onValueChange={(value) => field.onChange(value === "none" ? undefined : value)}
-                        disabled={isGenerating}
+                        disabled={isGenerating || noAiProviders}
                       >
                         <FormControl>
                           <SelectTrigger>
@@ -351,19 +394,27 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>ИИ-провайдер</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={isGenerating || noAiProviders}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="gigachat">GigaChat (рекомендуется)</SelectItem>
-                          <SelectItem value="yandexgpt">YandexGPT (beta)</SelectItem>
-                          <SelectItem value="vkai">VK AI (beta)</SelectItem>
+                          {availableAiProviders.map((id) => (
+                            <SelectItem key={id} value={id}>
+                              {AI_PROVIDER_LABELS[id]}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
-                      <FormDescription>Выбор влияет на стоимость, скорость и доступность генерации.</FormDescription>
+                      <FormDescription>
+                        В списке только провайдеры с заданными ключами в окружении сервера.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -377,7 +428,11 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Тип контента</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={isGenerating || noAiProviders}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue />
@@ -402,7 +457,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Тон сообщения</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating}>
+                      <Select value={field.value} onValueChange={field.onChange} disabled={isGenerating || noAiProviders}>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue />
@@ -434,7 +489,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                         step={10}
                         value={[field.value]}
                         onValueChange={(value: number[]) => field.onChange(value[0] ?? 800)}
-                        disabled={isGenerating}
+                        disabled={isGenerating || noAiProviders}
                       />
                     </FormControl>
                     <FormDescription>Рекомендуем 500-1200 символов для большинства постов.</FormDescription>
@@ -447,16 +502,17 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 control={form.control}
                 name="includeEmojis"
                 render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="space-y-0.5">
+                  <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-lg border p-3">
+                    <div className="min-w-0 flex-1 space-y-0.5 pr-1">
                       <FormLabel>Добавлять эмодзи</FormLabel>
                       <FormDescription>Если отключено, генератор пишет текст без эмодзи.</FormDescription>
                     </div>
-                    <FormControl>
+                    <FormControl className="shrink-0 self-start pt-0.5">
                       <Switch
+                        variant="emphasized"
                         checked={field.value}
                         onCheckedChange={field.onChange}
-                        disabled={isGenerating}
+                        disabled={isGenerating || noAiProviders}
                         aria-label="Добавлять эмодзи"
                       />
                     </FormControl>
@@ -469,13 +525,15 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   control={form.control}
                   name="enableAbTest"
                   render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-0.5">
+                    <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-lg border p-3">
+                      <div className="min-w-0 flex-1 space-y-0.5 pr-1">
                         <FormLabel>A/B варианты</FormLabel>
-                        <FormDescription>Создает несколько формулировок на одну тему.</FormDescription>
+                        <FormDescription>
+                          Рекомендуется включить, если сравниваете несколько ответов; число вариантов задаётся ниже.
+                        </FormDescription>
                       </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                      <FormControl className="shrink-0 self-start pt-0.5">
+                        <Switch variant="emphasized" checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating || noAiProviders} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -485,13 +543,13 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   control={form.control}
                   name="autoHashtags"
                   render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-0.5">
+                    <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-lg border p-3">
+                      <div className="min-w-0 flex-1 space-y-0.5 pr-1">
                         <FormLabel>Авто-хештеги</FormLabel>
                         <FormDescription>Добавляет рекомендованные хештеги под платформу.</FormDescription>
                       </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                      <FormControl className="shrink-0 self-start pt-0.5">
+                        <Switch variant="emphasized" checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating || noAiProviders} />
                       </FormControl>
                     </FormItem>
                   )}
@@ -507,7 +565,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                     <Select
                       value={String(field.value)}
                       onValueChange={(value) => field.onChange(Number(value) as 1 | 2 | 3)}
-                      disabled={isGenerating || !form.watch("enableAbTest")}
+                      disabled={isGenerating || noAiProviders}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -530,13 +588,17 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 control={form.control}
                 name="enableRecycle"
                 render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="space-y-0.5">
-                      <FormLabel>Ресайклинг 1→N платформ</FormLabel>
-                      <FormDescription>Сделает адаптированные версии под выбранные каналы.</FormDescription>
+                  <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-lg border p-3">
+                    <div className="min-w-0 flex-1 space-y-0.5 pr-1">
+                        <FormLabel>Ресайклинг 1→N платформ</FormLabel>
+                        <FormDescription>
+                          Дублирует смысл текста с разными вступлениями и призывами под каждый канал (без отдельного
+                          запроса к ИИ). Это не полная переписка под платформу — для глубокой адаптации сгенерируйте пост
+                          отдельно с нужной платформой.
+                        </FormDescription>
                     </div>
-                    <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating} />
+                    <FormControl className="shrink-0 self-start pt-0.5">
+                      <Switch variant="emphasized" checked={field.value} onCheckedChange={field.onChange} disabled={isGenerating || noAiProviders} />
                     </FormControl>
                   </FormItem>
                 )}
@@ -547,7 +609,6 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 name="recycleTargets"
                 render={({ field }) => {
                   const selectedTargets = field.value ?? [];
-                  const recycleEnabled = form.watch("enableRecycle");
                   return (
                     <FormItem>
                       <FormLabel>Целевые платформы ресайклинга</FormLabel>
@@ -561,7 +622,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                             >
                               <Checkbox
                                 checked={checked}
-                                disabled={isGenerating || !recycleEnabled}
+                                disabled={isGenerating || noAiProviders || !enableRecycle}
                                 onCheckedChange={(nextChecked) => {
                                   const nextTargets = nextChecked
                                     ? [...selectedTargets, target]
@@ -585,9 +646,10 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 userId={userId}
                 value={mediaUrls}
                 onChange={setMediaUrls}
+                disabled={noAiProviders}
               />
 
-              <Button type="submit" className="w-full" disabled={isGenerating}>
+              <Button type="submit" className="w-full" disabled={isGenerating || noAiProviders}>
                 {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {isGenerating ? "ИИ создаёт черновик..." : "Сгенерировать"}
               </Button>
@@ -621,7 +683,7 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                   variant="outline"
                   size="sm"
                   onClick={handleRetry}
-                  disabled={isGenerating || !lastRequest}
+                  disabled={isGenerating || noAiProviders || !lastRequest}
                 >
                   Повторить
                 </Button>
@@ -635,6 +697,19 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 <CardTitle className="text-base">Успешно сгенерировано</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {SHOW_AI_SOURCE && lastAiMeta ? (
+                  <div className="rounded-lg border border-dashed border-primary/35 bg-muted/50 px-3 py-2 text-xs">
+                    <p className="font-medium text-foreground">Источник ответа (для тестов)</p>
+                    <p className="mt-1 text-muted-foreground">
+                      Провайдер:{" "}
+                      <span className="font-mono text-foreground">{AI_PROVIDER_LABELS[lastAiMeta.provider]}</span>{" "}
+                      <span className="font-mono text-muted-foreground">({lastAiMeta.provider})</span>
+                    </p>
+                    <p className="text-muted-foreground">
+                      Модель: <span className="font-mono text-foreground">{lastAiMeta.model}</span>
+                    </p>
+                  </div>
+                ) : null}
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Название поста</p>
                   <Input
@@ -649,6 +724,10 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                 {variants.length > 1 ? (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">A/B варианты</p>
+                    <p className="text-xs text-muted-foreground">
+                      Все варианты получены одним запросом к ИИ (одна генерация на счёте). Сравните и выберите; при
+                      сохранении черновика в календарь уйдёт выбранный вариант.
+                    </p>
                     <div className="flex flex-wrap gap-2">
                       {variants.map((variant) => (
                         <Button
@@ -656,7 +735,10 @@ export function TextGeneratorForm({ userId, brands }: TextGeneratorFormProps) {
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setSelectedVariantId(variant.id);
                             setResult(variant.content);
                             setDraftTitle((current) => current || `${variant.label}: ${form.getValues("topic").slice(0, 90)}`);
                           }}

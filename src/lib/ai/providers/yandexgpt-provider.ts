@@ -23,10 +23,13 @@ export class YandexGPTProvider implements AIProvider {
   async generate(_params: AIProviderGenerateParams): Promise<AIProviderGenerateResult> {
     const apiKey = process.env.YANDEX_GPT_API_KEY
     const folderId = process.env.YANDEX_GPT_FOLDER_ID
-    const modelUri = process.env.YANDEX_GPT_MODEL_URI ?? (folderId ? `gpt://${folderId}/yandexgpt-lite/latest` : null)
+    const modelUri = process.env.YANDEX_GPT_MODEL_URI?.trim() || (folderId ? `gpt://${folderId}/yandexgpt-lite/latest` : null)
 
-    if (!apiKey || !modelUri) {
+    if (!apiKey) {
       throw new Error('YandexGPT не настроен: задайте YANDEX_GPT_API_KEY')
+    }
+    if (!modelUri) {
+      throw new Error('YandexGPT не настроен: укажите YANDEX_GPT_FOLDER_ID или полный YANDEX_GPT_MODEL_URI')
     }
 
     const payload = {

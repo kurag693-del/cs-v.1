@@ -6,6 +6,7 @@ import { type ContentStatus, type Platform } from '@prisma/client'
 import { type CSSProperties } from 'react'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { getApprovalStatus } from '@/lib/approval/workflow'
 
@@ -23,6 +24,8 @@ type DraggablePostCardProps = {
   draggingOpacity?: number
   publishTime: string
   onPublishTimeChange: (postId: string, value: string) => void
+  /** Открывает окно согласования; клик не запускает перетаскивание. */
+  onOpenApproval?: () => void
 }
 
 export function DraggablePostCard({
@@ -30,13 +33,14 @@ export function DraggablePostCard({
   draggingOpacity = 0.35,
   publishTime,
   onPublishTimeChange,
+  onOpenApproval,
 }: DraggablePostCardProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: post.id,
   })
 
   const style: CSSProperties = {
-    transform: isDragging ? undefined : CSS.Translate.toString(transform),
+    transform: CSS.Translate.toString(transform),
     opacity: isDragging ? draggingOpacity : 1,
     cursor: isDragging ? 'grabbing' : 'grab',
   }
@@ -54,6 +58,25 @@ export function DraggablePostCard({
     <div ref={setNodeRef} style={style} className="relative z-10" {...listeners} {...attributes}>
       <Card className="border-border">
         <CardContent className="space-y-2 p-3">
+          {onOpenApproval ? (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 text-xs"
+                aria-label="Открыть согласование поста"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onOpenApproval()
+                }}
+              >
+                Согласование
+              </Button>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-2">
             <Badge variant="outline">{post.platform}</Badge>
             <div className="flex items-center gap-1.5">

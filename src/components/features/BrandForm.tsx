@@ -241,17 +241,19 @@ export function BrandForm({
               name="structureTemplate"
               render={({ field }) => (
                 <FormItem className="min-w-0 md:col-span-2">
-                  <FormLabel>Шаблон структуры</FormLabel>
+                  <FormLabel>Порядок частей поста (по шагам)</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Например: Hook -> Контекст -> Польза -> Пример -> CTA"
+                      placeholder="Например: 1) Зацепка в первой строке 2) Короткий контекст 3) Главная польза 4) Пример или факт 5) Призыв в конце"
                       className="min-h-24 w-full max-w-full resize-none overflow-hidden"
                       {...field}
                       disabled={isSubmitting}
                     />
                   </FormControl>
                   <FormDescription>
-                    Шаблон структуры поста (до 500 символов). Чем конкретнее блоки, тем стабильнее результат генерации.
+                    Опишите простыми словами, из каких блоков должен состоять типичный пост для этого бренда — не код и не
+                    JSON, а сценарий: что написать в начале, что в середине, чем закончить. Это подсказка для ИИ, чтобы
+                    тексты были одинаково «склеены» по логике. До 500 символов.
                   </FormDescription>
                   <FormMessage>{form.formState.errors.structureTemplate?.message}</FormMessage>
                 </FormItem>

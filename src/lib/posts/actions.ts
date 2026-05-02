@@ -23,23 +23,35 @@ const SaveGenerationAsDraftSchema = z.object({
   platform: z.string().min(1, 'platform обязателен'),
   title: z.string().trim().min(1, 'Название поста обязательно').max(120, 'Название слишком длинное').optional(),
   mediaUrls: MediaUrlsSchema.optional(),
+  selectedVariantId: z.enum(['A', 'B', 'C']).optional(),
+})
+
+const hashtagListTransform = z
+  .union([z.array(z.string()), z.string()])
+  .transform((value) =>
+    Array.isArray(value)
+      ? value.map((item) => item.trim()).filter(Boolean)
+      : value
+          .split(/\s+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+  )
+  .default([])
+
+const GenerationOutputVariantSchema = z.object({
+  id: z.enum(['A', 'B', 'C']),
+  hook: z.string().default(''),
+  body: z.string().default(''),
+  hashtags: hashtagListTransform,
+  cta: z.string().default(''),
 })
 
 const GenerationOutputSchema = z.object({
   hook: z.string().default(''),
   body: z.string().default(''),
-  hashtags: z
-    .union([z.array(z.string()), z.string()])
-    .transform((value) =>
-      Array.isArray(value)
-        ? value.map((item) => item.trim()).filter(Boolean)
-        : value
-            .split(/\s+/)
-            .map((item) => item.trim())
-            .filter(Boolean)
-    )
-    .default([]),
+  hashtags: hashtagListTransform,
   cta: z.string().default(''),
+  variants: z.array(GenerationOutputVariantSchema).optional(),
 })
 
 type SaveAsDraftResult = { success: true; postId: string } | { success: false; error: string }
@@ -209,12 +221,12 @@ export async function updatePostSchedule(data: FormData, userId: string): Promis
       }
     }
 
-    const minScheduleDelay = new Date(Date.now() + 5 * 60 * 1000)
+    const minScheduleDelay = new Date(Date.now() + 1 * 60 * 1000)
 
     if (scheduledAt < minScheduleDelay) {
       return {
         success: false,
-        error: 'Дата публикации должна быть не ранее 5 минут от текущего времени',
+        error: 'Дата публикации должна быть не ранее чем через 1 минуту от текущего момента',
         code: 'INVALID_SCHEDULE',
       }
     }
@@ -400,7 +412,8 @@ export async function saveAsDraft(
   userId: string,
   platform: string,
   title?: string,
-  mediaUrls: string[] = []
+  mediaUrls: string[] = [],
+  selectedVariantId?: 'A' | 'B' | 'C'
 ): Promise<SaveAsDraftResult> {
   try {
     const parsed = SaveGenerationAsDraftSchema.safeParse({
@@ -409,6 +422,7 @@ export async function saveAsDraft(
       platform,
       title,
       mediaUrls,
+      selectedVariantId,
     })
 
     if (!parsed.success) {
@@ -463,7 +477,20 @@ export async function saveAsDraft(
       }
     }
 
-    const safeOutput = parsedOutput.data
+    const variantId = parsed.data.selectedVariantId ?? 'A'
+    let safeOutput = parsedOutput.data
+    if (safeOutput.variants && safeOutput.variants.length > 0) {
+      const chosen = safeOutput.variants.find((v) => v.id === variantId)
+      if (chosen) {
+        safeOutput = {
+          hook: chosen.hook,
+          body: chosen.body,
+          hashtags: chosen.hashtags,
+          cta: chosen.cta,
+        }
+      }
+    }
+
     const contentText =
       `${safeOutput.hook}\n\n${safeOutput.body}\n\n${safeOutput.hashtags.join(' ')}\n\n${safeOutput.cta}`.trim()
     const resolvedTitle = parsed.data.title ?? (safeOutput.hook.slice(0, 120) || 'Без заголовка')
@@ -516,9 +543,10 @@ export async function saveGenerationAsDraft(
   userId: string,
   platform: string,
   title?: string,
-  mediaUrls: string[] = []
+  mediaUrls: string[] = [],
+  selectedVariantId?: 'A' | 'B' | 'C'
 ): Promise<SaveAsDraftResult> {
-  return saveAsDraft(generationId, userId, platform, title, mediaUrls)
+  return saveAsDraft(generationId, userId, platform, title, mediaUrls, selectedVariantId)
 }
 
 export async function schedulePost(

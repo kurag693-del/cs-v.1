@@ -5,16 +5,18 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { routeModel, type GenerationTask, type RouteDecision } from '@/lib/ai/router'
 import type { GenerationResult } from '@/lib/ai/types'
+import { getConfiguredAIProviderIds, resolveEffectiveDefaultProvider } from '@/lib/ai/providers/availability'
 import { getAIProvider } from '@/lib/ai/providers/registry'
 import type { AIProviderId } from '@/lib/ai/providers/types'
 import { prisma } from '@/lib/db'
 import { buildPrompt, parseGenerationFromText, type PromptBuildInput } from '@/lib/generate/prompt-utils'
 import { moderator } from '@/lib/ai/moderation'
 import { calculateCost, trackTokenUsage } from '@/lib/ai/utils'
-import { generatedJsonSchema, normalizeGeneratedContent, validateGeneratedContent } from '@/lib/validation/generation-output'
 import { validateSession } from '@/lib/auth/lucia'
+import { aiProviderIdSchema } from '@/lib/validation/ai-provider'
+import { generatedJsonSchema, normalizeGeneratedContent, validateGeneratedContent } from '@/lib/validation/generation-output'
 import { createCorrelationId, logAiCost } from '@/lib/observability/cost-log'
-import { buildAbVariants } from '@/lib/ai/workflows/ab-variants'
+import { AB_VARIANT_LABELS, buildAbVariants } from '@/lib/ai/workflows/ab-variants'
 import { generateAutoHashtags } from '@/lib/ai/workflows/hashtags'
 import { recycleContentForPlatforms, type RecycleTarget } from '@/lib/ai/workflows/recycle'
 
@@ -22,7 +24,7 @@ const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
   prompt: z.string().min(5, 'Prompt must be at least 5 characters').max(5000, 'Prompt must not exceed 5000 characters'),
   platform: z.enum(['TWITTER', 'LINKEDIN', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'VK', 'TIKTOK', 'YOUTUBE']).optional(),
-  provider: z.enum(['gigachat', 'yandexgpt', 'vkai']).default('gigachat'),
+  provider: aiProviderIdSchema.default(() => resolveEffectiveDefaultProvider()),
   brandId: z.string().optional(),
   profileId: z.string().optional(),
   maxLength: z.number().int().min(80).max(5000).default(800),
@@ -59,6 +61,12 @@ type GenerateTextPayload =
       metadata?: Record<string, unknown>
     }
 
+function coerceVariantsCount(value: unknown): 1 | 2 | 3 {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : Number(value)
+  if (n === 1 || n === 2 || n === 3) return n
+  return 2
+}
+
 function normalizeGenerateInput(payload: GenerateTextPayload) {
   if (payload instanceof FormData) {
     const metadataRaw = payload.get('metadata')
@@ -66,7 +74,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       type: payload.get('type') ?? 'social_post',
       prompt: payload.get('prompt') ?? payload.get('topic'),
       platform: payload.get('platform'),
-      provider: payload.get('provider') ?? 'gigachat',
+      provider: payload.get('provider') ?? resolveEffectiveDefaultProvider(),
       brandId: payload.get('brandId'),
       profileId: payload.get('profileId'),
       maxLength: Number(payload.get('maxLength') ?? 800),
@@ -74,7 +82,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
       toneOverride: (payload.get('toneOverride')?.toString() as PromptBuildInput['toneOverride'] | undefined) ?? 'brand',
       includeEmojis: payload.get('includeEmojis')?.toString() !== 'false',
       enableAbTest: payload.get('enableAbTest')?.toString() === 'true',
-      variantsCount: Number(payload.get('variantsCount') ?? 2),
+      variantsCount: coerceVariantsCount(payload.get('variantsCount') ?? 2),
       autoHashtags: payload.get('autoHashtags')?.toString() !== 'false',
       enableRecycle: payload.get('enableRecycle')?.toString() === 'true',
       recycleTargets: (() => {
@@ -109,7 +117,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     type: payload.type ?? 'social_post',
     prompt: payload.prompt ?? payload.topic,
     platform: normalizedPlatform,
-    provider: payload.provider ?? 'gigachat',
+    provider: payload.provider ?? resolveEffectiveDefaultProvider(),
     brandId: payload.brandId,
     profileId: payload.profileId,
     maxLength: payload.maxLength ?? 800,
@@ -117,7 +125,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     toneOverride: payload.toneOverride ?? 'brand',
     includeEmojis: payload.includeEmojis ?? true,
     enableAbTest: payload.enableAbTest ?? false,
-    variantsCount: payload.variantsCount ?? 2,
+    variantsCount: coerceVariantsCount(payload.variantsCount ?? 2),
     autoHashtags: payload.autoHashtags ?? true,
     enableRecycle: payload.enableRecycle ?? false,
     recycleTargets: payload.recycleTargets ?? [],
@@ -131,6 +139,98 @@ function extractJsonObject(raw: string): string | null {
   const end = raw.lastIndexOf('}')
   if (start < 0 || end < 0 || end <= start) return null
   return raw.slice(start, end + 1)
+}
+
+type NormalizedGeneration = ReturnType<typeof normalizeGeneratedContent>
+
+function formatNormalizedContent(n: NormalizedGeneration): string {
+  return `${n.hook}\n\n${n.body}\n\n${n.hashtags.join(' ')}\n\n${n.cta}`.trim()
+}
+
+function parseProviderRawToNormalized(
+  raw: string,
+  minLength: number
+): { ok: true; data: NormalizedGeneration } | { ok: false; message: string } {
+  const jsonPayload = extractJsonObject(raw)
+  let generated = parseGenerationFromText(raw)
+  if (jsonPayload) {
+    try {
+      const parsedGeneration = generatedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
+      if (parsedGeneration.success) {
+        generated = parsedGeneration.data
+      }
+    } catch {
+      // keep fallback parsed output
+    }
+  }
+
+  const normalizedGenerated = normalizeGeneratedContent(generated)
+  const generatedValidation = validateGeneratedContent(normalizedGenerated, minLength)
+  if (!generatedValidation.valid) {
+    return { ok: false, message: generatedValidation.message }
+  }
+  return { ok: true, data: normalizedGenerated }
+}
+
+function parseAllVariantsFromProviderRaw(
+  raw: string,
+  variantsCount: 1 | 2 | 3,
+  minLength: number
+):
+  | { ok: true; runs: NormalizedGeneration[]; mode: 'multi_json' | 'single_json' | 'single_plus_local' }
+  | { ok: false; message: string } {
+  if (variantsCount === 1) {
+    const one = parseProviderRawToNormalized(raw, minLength)
+    return one.ok ? { ok: true, runs: [one.data], mode: 'single_json' } : one
+  }
+
+  const jsonPayload = extractJsonObject(raw)
+  if (jsonPayload) {
+    try {
+      const obj = JSON.parse(jsonPayload) as Record<string, unknown>
+      if (Array.isArray(obj.variants) && obj.variants.length > 0) {
+        const slice = obj.variants.slice(0, variantsCount)
+        if (slice.length === variantsCount) {
+          const runs: NormalizedGeneration[] = []
+          for (let i = 0; i < variantsCount; i++) {
+            const parsed = generatedJsonSchema.safeParse(slice[i])
+            if (!parsed.success) {
+              return {
+                ok: false,
+                message: `Вариант ${String.fromCharCode(65 + i)}: ожидались поля hook, body и др. в JSON`,
+              }
+            }
+            const norm = normalizeGeneratedContent(parsed.data)
+            const val = validateGeneratedContent(norm, minLength)
+            if (!val.valid) {
+              return { ok: false, message: `Вариант ${String.fromCharCode(65 + i)}: ${val.message}` }
+            }
+            runs.push(norm)
+          }
+          return { ok: true, runs, mode: 'multi_json' }
+        }
+      }
+    } catch {
+      // пробуем одиночный JSON или локальные варианты
+    }
+  }
+
+  const single = parseProviderRawToNormalized(raw, minLength)
+  if (!single.ok) {
+    return single
+  }
+
+  const formatted = formatNormalizedContent(single.data)
+  const ab = buildAbVariants(formatted, variantsCount)
+  const runs: NormalizedGeneration[] = []
+  for (let i = 0; i < ab.length; i++) {
+    const loose = parseGenerationFromText(ab[i].content)
+    const norm = normalizeGeneratedContent(loose)
+    const minL = i === 0 ? minLength : Math.min(minLength, 260)
+    const val = validateGeneratedContent(norm, minL)
+    runs.push(val.valid ? norm : single.data)
+  }
+  return { ok: true, runs, mode: 'single_plus_local' }
 }
 
 function extractBrandMetadataArray(metadata: Prisma.JsonValue | null | undefined, key: string): string[] {
@@ -195,6 +295,22 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       recycleTargets,
       metadata,
     } = validated.data
+
+    const configuredProviders = getConfiguredAIProviderIds()
+    if (configuredProviders.length === 0) {
+      return {
+        success: false,
+        error: 'Ни один ИИ-провайдер не настроен. Добавьте ключи в .env.local (см. .env.local.example).',
+        code: 'NO_AI_PROVIDER',
+      }
+    }
+    if (!configuredProviders.includes(provider)) {
+      return {
+        success: false,
+        error: 'Этот провайдер не подключён (проверьте переменные окружения).',
+        code: 'VALIDATION_ERROR',
+      }
+    }
 
     const localUser = await prisma.user.findFirst({ where: { id: userId, deletedAt: null }, select: { id: true } })
     if (!localUser) {
@@ -270,12 +386,19 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         contentType,
         toneOverride,
         includeEmojis,
+        variantsCount,
       },
       brandVoiceData
     )
 
-    const estimatedTokens = aiProvider.estimateTokens({ prompt: enhancedPrompt, maxTokens: route.maxTokens })
+    const maxOutTokens =
+      variantsCount > 1
+        ? Math.min(Math.floor(route.maxTokens * (variantsCount === 2 ? 2 : 2.5)), 12000)
+        : route.maxTokens
+
+    const estimatedTokens = aiProvider.estimateTokens({ prompt: enhancedPrompt, maxTokens: maxOutTokens })
     const estimatedCost = calculateCost(estimatedTokens, route.model)
+    const minLength = Math.max(300, Math.floor(maxLength * 0.6))
 
     const generation = await prisma.generation.create({
       data: {
@@ -293,60 +416,73 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
           platform,
           provider,
           estimatedCost,
+          plannedVariants: variantsCount,
           ...metadata,
         } as unknown) as Prisma.InputJsonValue,
       },
     })
 
-    const providerResult = await aiProvider.generate({
+    type ProviderGen = Awaited<ReturnType<typeof aiProvider.generate>>
+    let lastProviderResult: ProviderGen | null = null
+
+    const firstRaw = await aiProvider.generate({
       prompt: enhancedPrompt,
       temperature: route.temperature,
-      maxTokens: route.maxTokens,
+      maxTokens: maxOutTokens,
     })
+    lastProviderResult = firstRaw
 
-    const jsonPayload = extractJsonObject(providerResult.content)
-    let generated = parseGenerationFromText(providerResult.content)
-    if (jsonPayload) {
-      try {
-        const parsedGeneration = generatedJsonSchema.safeParse(JSON.parse(jsonPayload) as unknown)
-        if (parsedGeneration.success) {
-          generated = parsedGeneration.data
-        }
-      } catch {
-        // keep fallback parsed output
-      }
-    }
-
-    const normalizedGenerated = normalizeGeneratedContent(generated)
-    const minLength = Math.max(300, Math.floor(maxLength * 0.6))
-    const generatedValidation = validateGeneratedContent(normalizedGenerated, minLength)
-    if (!generatedValidation.valid) {
+    const parsedRuns = parseAllVariantsFromProviderRaw(firstRaw.content, variantsCount, minLength)
+    if (!parsedRuns.ok) {
       await prisma.generation.update({
         where: { id: generation.id },
         data: {
           status: 'FAILED',
-          error: generatedValidation.message,
+          error: parsedRuns.message,
           metadata: {
             ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
             failedAt: new Date(),
-            validationError: generatedValidation.message,
+            validationError: parsedRuns.message,
             provider,
           } as Prisma.InputJsonValue,
         },
       })
-      return { success: false, error: generatedValidation.message, code: 'VALIDATION_ERROR' }
+      return { success: false, error: parsedRuns.message, code: 'VALIDATION_ERROR' }
     }
 
-    const generatedContent = `${normalizedGenerated.hook}\n\n${normalizedGenerated.body}\n\n${normalizedGenerated.hashtags.join(' ')}\n\n${normalizedGenerated.cta}`.trim()
-    const variants = enableAbTest ? buildAbVariants(generatedContent, variantsCount) : buildAbVariants(generatedContent, 1)
-    const hashtags = autoHashtags ? generateAutoHashtags(generatedContent, normalizedInput.platformLabel ?? platform ?? 'instagram') : []
+    const normalizedRuns = parsedRuns.runs
+    const variantParseMode = parsedRuns.mode
+
+    const ids = (['A', 'B', 'C'] as const).slice(0, variantsCount)
+    const primary = normalizedRuns[0]!
+    const generatedContent = formatNormalizedContent(primary)
+
+    const variants = normalizedRuns.map((norm, idx) => ({
+      id: ids[idx]!,
+      label: AB_VARIANT_LABELS[ids[idx]!],
+      content: formatNormalizedContent(norm),
+    }))
+
+    const hashtags = autoHashtags
+      ? generateAutoHashtags(generatedContent, normalizedInput.platformLabel ?? platform ?? 'instagram')
+      : []
     const recycledPosts = enableRecycle ? recycleContentForPlatforms(generatedContent, recycleTargets as RecycleTarget[]) : []
+
     const generationOutputJson = JSON.stringify({
-      hook: normalizedGenerated.hook,
-      body: normalizedGenerated.body,
-      hashtags: normalizedGenerated.hashtags,
-      cta: normalizedGenerated.cta,
+      hook: primary.hook,
+      body: primary.body,
+      hashtags: primary.hashtags,
+      cta: primary.cta,
+      variants: normalizedRuns.map((norm, idx) => ({
+        id: ids[idx]!,
+        hook: norm.hook,
+        body: norm.body,
+        hashtags: norm.hashtags,
+        cta: norm.cta,
+      })),
     })
+
+    const sumPromptTokenEst = Math.ceil(enhancedPrompt.length / 4)
 
     await prisma.generation.update({
       where: { id: generation.id },
@@ -358,16 +494,18 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
           ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
           completedAt: new Date(),
           actualCost: estimatedCost,
-          modelUsed: providerResult.model,
-          provider: providerResult.provider,
+          modelUsed: lastProviderResult?.model,
+          provider: lastProviderResult?.provider,
+          aiCalls: 1,
+          variantParseMode,
         } as Prisma.InputJsonValue,
       },
     })
 
     trackTokenUsage(
       {
-        promptTokens: Math.ceil(enhancedPrompt.length / 4),
-        completionTokens: Math.max(estimatedTokens - Math.ceil(enhancedPrompt.length / 4), 0),
+        promptTokens: sumPromptTokenEst,
+        completionTokens: Math.max(estimatedTokens - sumPromptTokenEst, 0),
         totalTokens: estimatedTokens,
       },
       estimatedCost
@@ -375,14 +513,16 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
     logAiCost({
       userId,
       generationId: generation.id,
-      provider: providerResult.provider,
-      model: providerResult.model,
+      provider: lastProviderResult!.provider,
+      model: lastProviderResult!.model,
       totalTokens: estimatedTokens,
       costUsd: estimatedCost,
       correlationId,
       metadata: {
         task: type,
         platform: platform ?? 'UNKNOWN',
+        aiCalls: 1,
+        variantParseMode,
       },
     })
 
@@ -396,11 +536,11 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         variants,
         hashtags,
         recycledPosts,
-        model: providerResult.model,
-        provider: providerResult.provider,
+        model: lastProviderResult!.model,
+        provider: lastProviderResult!.provider,
         tokens: {
-          promptTokens: Math.ceil(enhancedPrompt.length / 4),
-          completionTokens: Math.max(estimatedTokens - Math.ceil(enhancedPrompt.length / 4), 0),
+          promptTokens: sumPromptTokenEst,
+          completionTokens: Math.max(estimatedTokens - sumPromptTokenEst, 0),
           totalTokens: estimatedTokens,
           estimatedCostUSD: estimatedCost,
         },

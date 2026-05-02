@@ -7,8 +7,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getBrands } from "@/lib/brands/actions";
+import {
+  getConfiguredAIProviderIds,
+  pickDefaultProviderForUi,
+  resolveEffectiveDefaultProvider,
+} from "@/lib/ai/providers/availability";
+import { resolveConfiguredDefaultProviderId } from "@/lib/ai/providers/registry";
 import { validateSession } from "@/lib/auth/lucia";
+import { getBrands } from "@/lib/brands/actions";
 
 export default async function GeneratePage() {
   const { user } = await validateSession();
@@ -19,6 +25,11 @@ export default async function GeneratePage() {
 
   const brandsResult = await getBrands(userId);
   const brands = brandsResult.success ? brandsResult.data ?? [] : [];
+
+  const availableAiProviders = getConfiguredAIProviderIds();
+  const defaultAiProvider =
+    pickDefaultProviderForUi(resolveConfiguredDefaultProviderId(), availableAiProviders) ??
+    resolveEffectiveDefaultProvider();
 
   return (
     <div className="space-y-5">
@@ -78,6 +89,8 @@ export default async function GeneratePage() {
         <TextGeneratorForm
           userId={userId}
           brands={brands.map((item) => ({ id: item.id, name: item.name }))}
+          availableAiProviders={availableAiProviders}
+          defaultAiProvider={defaultAiProvider}
         />
       </div>
     </div>

@@ -17,13 +17,22 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
+import type { AIProviderId } from "@/lib/ai/providers/types";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 type Platform = "Instagram" | "Telegram" | "VK" | "TikTok";
-type Provider = "gigachat" | "yandexgpt" | "vkai";
+
+const AI_PROVIDER_LABELS: Record<AIProviderId, string> = {
+  deepseek: "DeepSeek (fallback → GigaChat)",
+  yandexgpt: "YandexGPT",
+  gigachat: "GigaChat",
+};
 
 type TextGeneratorProps = {
   userId: string;
   availableBrands: Array<{ id: string; name: string }>;
+  availableAiProviders: AIProviderId[];
+  defaultAiProvider: AIProviderId;
 };
 
 type ParsedResult = {
@@ -51,11 +60,12 @@ function mapPlatformToPost(platform: Platform): "INSTAGRAM" | "TIKTOK" {
   return platform === "TikTok" ? "TIKTOK" : "INSTAGRAM";
 }
 
-export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
+export function TextGenerator({ userId, availableBrands, availableAiProviders, defaultAiProvider }: TextGeneratorProps) {
   const { toast } = useToast();
+  const noAiProviders = availableAiProviders.length === 0;
   const [topic, setTopic] = useState("");
   const [platform, setPlatform] = useState<Platform>("Instagram");
-  const [provider, setProvider] = useState<Provider>("gigachat");
+  const [provider, setProvider] = useState<AIProviderId>(defaultAiProvider);
   const [brandId, setBrandId] = useState<string>("none");
   const [maxLength, setMaxLength] = useState<number[]>([600]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -64,6 +74,10 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
   const [result, setResult] = useState<ParsedResult | null>(null);
 
   const runGeneration = async () => {
+    if (noAiProviders) {
+      setError("Нет настроенных ИИ-провайдеров");
+      return;
+    }
     if (!topic.trim()) {
       setError("Введите тему поста");
       return;
@@ -148,6 +162,12 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
           <CardDescription>Заполните параметры и получите готовый текст</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {noAiProviders ? (
+            <Alert variant="destructive">
+              <AlertTitle>ИИ-провайдеры не настроены</AlertTitle>
+              <AlertDescription>Укажите ключи в .env.local и перезапустите сервер (см. .env.local.example).</AlertDescription>
+            </Alert>
+          ) : null}
           <div className="space-y-2">
             <p className="text-sm font-medium">Тема</p>
             <Textarea
@@ -155,14 +175,18 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
               onChange={(event) => setTopic(event.target.value)}
               placeholder="О чем будет пост?"
               className="min-h-28"
-              disabled={isSubmitting}
+              disabled={isSubmitting || noAiProviders}
             />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <p className="text-sm font-medium">Платформа</p>
-              <Select value={platform} onValueChange={(value) => setPlatform(value as Platform)}>
+              <Select
+                value={platform}
+                onValueChange={(value) => setPlatform(value as Platform)}
+                disabled={isSubmitting || noAiProviders}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -177,7 +201,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
 
             <div className="space-y-2">
               <p className="text-sm font-medium">Бренд</p>
-              <Select value={brandId} onValueChange={setBrandId}>
+              <Select value={brandId} onValueChange={setBrandId} disabled={isSubmitting || noAiProviders}>
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите бренд" />
                 </SelectTrigger>
@@ -195,14 +219,20 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
 
           <div className="space-y-2">
             <p className="text-sm font-medium">ИИ-провайдер</p>
-            <Select value={provider} onValueChange={(value) => setProvider(value as Provider)}>
+            <Select
+              value={provider}
+              onValueChange={(value) => setProvider(value as AIProviderId)}
+              disabled={isSubmitting || noAiProviders}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="gigachat">GigaChat (рекомендуется)</SelectItem>
-                <SelectItem value="yandexgpt">YandexGPT (beta)</SelectItem>
-                <SelectItem value="vkai">VK AI (beta)</SelectItem>
+                <SelectContent>
+                {availableAiProviders.map((id) => (
+                  <SelectItem key={id} value={id}>
+                    {AI_PROVIDER_LABELS[id]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -215,7 +245,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
               max={2000}
               step={20}
               onValueChange={setMaxLength}
-              disabled={isSubmitting}
+              disabled={isSubmitting || noAiProviders}
             />
           </div>
 
@@ -226,7 +256,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
           ) : null}
 
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button className="w-full" onClick={runGeneration} disabled={isSubmitting}>
+            <Button className="w-full" onClick={runGeneration} disabled={isSubmitting || noAiProviders}>
               {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isSubmitting ? "Генерация..." : "Сгенерировать"}
             </Button>
@@ -235,7 +265,7 @@ export function TextGenerator({ userId, availableBrands }: TextGeneratorProps) {
                 variant="outline"
                 className="w-full sm:w-auto"
                 onClick={runGeneration}
-                disabled={isSubmitting}
+                disabled={isSubmitting || noAiProviders}
               >
                 <RefreshCcw className="mr-2 h-4 w-4" />
                 Повторить

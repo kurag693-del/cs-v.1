@@ -13,9 +13,10 @@ type ImageUploaderProps = {
   userId: string
   value: string[]
   onChange: (urls: string[]) => void
+  disabled?: boolean
 }
 
-export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
+export function ImageUploader({ userId, value, onChange, disabled = false }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -33,7 +34,7 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
   }
 
   const handleFiles = async (files: FileList | File[]) => {
-    if (isUploading) return
+    if (disabled || isUploading) return
     const items = Array.from(files)
     if (items.length === 0) return
 
@@ -87,7 +88,13 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
     <div className="space-y-3 rounded-lg border p-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">Изображение для поста</p>
-        <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || isUploading}
+        >
           {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
           Выбрать файл
         </Button>
@@ -159,7 +166,7 @@ export function ImageUploader({ userId, value, onChange }: ImageUploaderProps) {
                   variant="outline"
                   size="sm"
                   onClick={() => onChange(value.filter((item) => item !== url))}
-                  disabled={isUploading}
+                  disabled={disabled || isUploading}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
                   Удалить
