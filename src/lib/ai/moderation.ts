@@ -1,46 +1,105 @@
 import type { ModerationResult } from './types'
+import { routeModel } from '@/lib/ai/router'
+import { pickOpenRouterTextModel } from '@/lib/ai/model-catalog'
+import { getConfiguredAIProviderIds } from '@/lib/ai/providers/availability'
+import { getAIProvider } from '@/lib/ai/providers/registry'
+import { resolveEffectiveDefaultProvider } from '@/lib/ai/providers/availability'
+import type { AIProviderId } from '@/lib/ai/providers/types'
 
-// Content moderation using LLM-based approach
-export class ContentModerator {
-  private moderationPrompt: string = `
-You are a content moderation system. Analyze the following user prompt and determine if it violates content policies.
-
-POLICIES:
-- No hate speech, harassment, or discriminatory content
-- No violence, threats, or self-harm
-- No sexually explicit content
-- No illegal activities or promotion of illegal acts
-- No spam or phishing attempts
-- No personal information or doxxing
-- Respect copyright and intellectual property
-
-Analyze the prompt and return ONLY a JSON object with this structure:
-{
-  "isApproved": boolean,
-  "categories": string[],
-  "severity": "low" | "medium" | "high" | "critical",
-  "reason": string,
-  "flags": string[]
+function extractJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  if (start < 0 || end < 0 || end <= start) return null
+  return raw.slice(start, end + 1)
 }
 
-USER PROMPT:
-{{PROMPT}}
+/**
+ * LLM-модерация (отдельный короткий запрос). При ошибке возвращает null — снаружи fallback.
+ */
+async function moderateWithLlm(userPrompt: string): Promise<ModerationResult | null> {
+  if (process.env.MODERATION_USE_LLM === 'false') return null
 
-Return JSON only, no additional text.
-`
+  const ids = getConfiguredAIProviderIds()
+  if (ids.length === 0) return null
 
-  // In a real implementation, this would fetch from a file
-  // For now, using inline prompt
+  const preferredRaw = process.env.MODERATION_AI_PROVIDER?.trim().toLowerCase()
+  const preferred =
+    preferredRaw && (ids as readonly string[]).includes(preferredRaw) ? (preferredRaw as AIProviderId) : null
+  const providerId = preferred ?? resolveEffectiveDefaultProvider()
+  if (!(ids as readonly string[]).includes(providerId)) return null
+
+  const route = routeModel('text', 'FREE')
+  const provider = getAIProvider(providerId)
+
+  const instruction = `Ты модератор. Проанализируй пользовательский запрос на генерацию контента.
+Верни ТОЛЬКО JSON без markdown:
+{"isApproved": boolean, "categories": string[], "severity": "low"|"medium"|"high"|"critical", "reason": string, "flags": string[]}
+Отклоняй: разжигание ненависти, насилие, сексуальный контент с несовершеннолетними, инструкции к преступлениям, персональные данные чужих людей, фишинг.
+
+Запрос пользователя:
+---
+${userPrompt.slice(0, 8000)}
+---`
+
+  try {
+    const res = await provider.generate({
+      prompt: instruction,
+      temperature: 0,
+      maxTokens: 400,
+      ...(providerId === 'openrouter'
+        ? { model: pickOpenRouterTextModel('FREE', route.model, undefined) }
+        : {}),
+    })
+
+    const jsonRaw = extractJsonObject(res.content)
+    if (!jsonRaw) return null
+    const parsed = JSON.parse(jsonRaw) as Record<string, unknown>
+    const isApproved = Boolean(parsed.isApproved)
+    const categories = Array.isArray(parsed.categories)
+      ? parsed.categories.filter((c): c is string => typeof c === 'string')
+      : []
+    const severity = ['low', 'medium', 'high', 'critical'].includes(String(parsed.severity))
+      ? (parsed.severity as ModerationResult['severity'])
+      : 'low'
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : 'Moderation'
+    const flags = Array.isArray(parsed.flags)
+      ? parsed.flags.filter((c): c is string => typeof c === 'string')
+      : []
+
+    return {
+      isApproved,
+      categories,
+      severity,
+      reason,
+      flags,
+    }
+  } catch {
+    return null
+  }
+}
+
+export class ContentModerator {
   async moderateContent(prompt: string): Promise<ModerationResult> {
-    // Basic keyword filtering (fast path)
     const blockedKeywords = [
-      'hate', 'kill', 'die', 'suicide', 'bomb', 'terror',
-      'racist', 'nazi', 'slur', 'rape', 'pedophile',
-      'ssn', 'social security', 'credit card', 'password'
+      'hate',
+      'kill',
+      'die',
+      'suicide',
+      'bomb',
+      'terror',
+      'racist',
+      'nazi',
+      'slur',
+      'rape',
+      'pedophile',
+      'ssn',
+      'social security',
+      'credit card',
+      'password',
     ]
 
     const lowerPrompt = prompt.toLowerCase()
-    const foundKeywords = blockedKeywords.filter(kw => lowerPrompt.includes(kw))
+    const foundKeywords = blockedKeywords.filter((kw) => lowerPrompt.includes(kw))
 
     if (foundKeywords.length > 0) {
       return {
@@ -52,17 +111,15 @@ Return JSON only, no additional text.
       }
     }
 
-    // For now, simulate LLM moderation (in production, call LiteLLM/OpenRouter)
-    // This is a placeholder - would integrate with routeModel() and actual LLM call
+    const llm = await moderateWithLlm(prompt)
+    if (llm) return llm
+
     return this.simulateModeration(prompt)
   }
 
   private async simulateModeration(prompt: string): Promise<ModerationResult> {
-    // Simple heuristic-based moderation for demo
     const toxicIndicators = ['fuck', 'shit', 'asshole', 'bitch', 'damn']
-    const toxicCount = toxicIndicators.filter(word => 
-      prompt.toLowerCase().includes(word)
-    ).length
+    const toxicCount = toxicIndicators.filter((word) => prompt.toLowerCase().includes(word)).length
 
     if (toxicCount >= 3) {
       return {
@@ -74,7 +131,6 @@ Return JSON only, no additional text.
       }
     }
 
-    // Length checks
     if (prompt.length < 5) {
       return {
         isApproved: false,

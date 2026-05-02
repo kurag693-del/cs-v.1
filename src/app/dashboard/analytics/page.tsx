@@ -8,7 +8,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
-import { ArrowRight, Sparkles, TrendingUp } from 'lucide-react'
+import type { ChannelMetricRow } from '@/lib/analytics/engagement-types'
+
+import { ArrowRight, Loader2, RefreshCw, Sparkles, TrendingUp } from 'lucide-react'
 import { ContextualAiSuggestion } from '@/components/ui/contextual-ai-suggestion'
 
 type AnalyticsData = {
@@ -35,10 +37,17 @@ export default function AnalyticsPage() {
   const router = useRouter()
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loadingData, setLoadingData] = useState(true)
+  const [channelPosts, setChannelPosts] = useState<ChannelMetricRow[]>([])
+  const [channelLoading, setChannelLoading] = useState(true)
+  const [syncingId, setSyncingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login')
+      queueMicrotask(() => {
+        setLoadingData(false)
+        setChannelLoading(false)
+      })
       return
     }
     if (user) {
@@ -52,8 +61,38 @@ export default function AnalyticsPage() {
           }
         })
         .finally(() => setLoadingData(false))
+
+      fetch('/api/analytics/channel-metrics')
+        .then((res) => res.json())
+        .then((result) => {
+          if (result?.success && Array.isArray(result.data?.posts)) {
+            setChannelPosts(result.data.posts as ChannelMetricRow[])
+          }
+        })
+        .finally(() => setChannelLoading(false))
     }
   }, [loading, user, router])
+
+  const handleSyncEngagement = async (postId: string) => {
+    setSyncingId(postId)
+    try {
+      const res = await fetch('/api/analytics/sync-engagement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId }),
+      })
+      const json = (await res.json()) as { success?: boolean; data?: { snapshot?: unknown } }
+      if (!json.success) {
+        return
+      }
+      const refreshed = await fetch('/api/analytics/channel-metrics').then((r) => r.json())
+      if (refreshed?.success && Array.isArray(refreshed.data?.posts)) {
+        setChannelPosts(refreshed.data.posts as ChannelMetricRow[])
+      }
+    } finally {
+      setSyncingId(null)
+    }
+  }
 
   if (loading || loadingData) {
     return (
@@ -178,6 +217,68 @@ export default function AnalyticsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Метрики из каналов</CardTitle>
+          <CardDescription>
+            VK: просмотры и реакции через API при корректном `externalId`. Telegram: ограничения Bot API — см.{' '}
+            <code className="rounded bg-muted px-1 text-xs">TELEGRAM_ENGAGEMENT_MOCK</code> в примере env.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {channelLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : channelPosts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Нет опубликованных постов для синхронизации.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="border-b bg-muted/50">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Платформа</th>
+                    <th className="px-3 py-2 font-medium">Фрагмент</th>
+                    <th className="px-3 py-2 font-medium">Просмотры</th>
+                    <th className="px-3 py-2 font-medium">Лайки</th>
+                    <th className="px-3 py-2 font-medium">Источник</th>
+                    <th className="px-3 py-2 font-medium" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {channelPosts.map((row) => (
+                    <tr key={row.postId} className="border-b border-border/80">
+                      <td className="px-3 py-2">{row.platform}</td>
+                      <td className="max-w-[220px] truncate px-3 py-2 text-muted-foreground">{row.excerpt}</td>
+                      <td className="px-3 py-2">{row.engagement?.views ?? '—'}</td>
+                      <td className="px-3 py-2">{row.engagement?.likes ?? '—'}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                        {row.engagement?.source ?? '—'}
+                        {row.engagement?.error ? ` · ${row.engagement.error.slice(0, 48)}` : ''}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={syncingId === row.postId}
+                          onClick={() => void handleSyncEngagement(row.postId)}
+                        >
+                          {syncingId === row.postId ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          <span className="ml-1">Синхрон</span>
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <Card>

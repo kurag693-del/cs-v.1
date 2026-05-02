@@ -11,6 +11,7 @@ import {
   TEMPLATE_CATEGORY_LABELS,
   TEMPLATE_CATEGORY_ORDER,
 } from "@/lib/templates/builtin-templates";
+import { getTemplateCategoryIcon } from "@/lib/templates/category-template-icons";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,7 @@ export function TemplateSelector(props: TemplateSelectorProps) {
 
       <div className="grid gap-2 sm:grid-cols-2">
         {ordered.map((template) => {
+          const { Icon: CategoryIcon } = getTemplateCategoryIcon(template.category);
           const isActive = isForm && selectedId === template.id;
           const isFav = favoriteIds.includes(template.id);
           const isPreferred = preferredId === template.id;
@@ -122,6 +124,9 @@ export function TemplateSelector(props: TemplateSelectorProps) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 space-y-0.5">
                     <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/50 text-muted-foreground" aria-hidden>
+                        <CategoryIcon className="h-4 w-4" />
+                      </span>
                       <CardTitle className="text-sm font-medium leading-tight">{template.name}</CardTitle>
                       <Badge variant="outline" className="text-[0.65rem] font-normal">
                         {TEMPLATE_CATEGORY_LABELS[template.category]}

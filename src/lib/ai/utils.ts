@@ -15,11 +15,11 @@ export function calculateCost(tokenCount: number, model: string): number {
 
 const usageHistory: AICostTracking[] = []
 
-export function trackTokenUsage(usage: TokenUsage, cost: number): void {
+export function trackTokenUsage(usage: TokenUsage, cost: number, modelLabel?: string): void {
   usageHistory.push({
     tokenUsage: usage,
     cost,
-    model: 'unknown',
+    model: modelLabel ?? 'unknown',
     timestamp: new Date(),
   })
 }

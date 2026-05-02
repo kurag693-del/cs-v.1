@@ -1,4 +1,4 @@
-export type ImageGenBackendId = 'mock' | 'http' | 'yandex_art'
+export type ImageGenBackendId = 'mock' | 'http' | 'yandex_art' | 'openrouter'
 
 export type GeneratedImageResult = {
   imageUrl: string

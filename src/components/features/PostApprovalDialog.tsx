@@ -85,21 +85,24 @@ export function PostApprovalDialog({
 
   useEffect(() => {
     if (!open) return
-    if (initialPostId && posts.some((p) => p.id === initialPostId)) {
-      setSelectedId(initialPostId)
-      return
-    }
-    setSelectedId((current) => {
-      if (current && posts.some((p) => p.id === current)) return current
-      return posts[0]?.id ?? ''
+    queueMicrotask(() => {
+      if (initialPostId && posts.some((p) => p.id === initialPostId)) {
+        setSelectedId(initialPostId)
+        return
+      }
+      setSelectedId((current) => {
+        if (current && posts.some((p) => p.id === current)) return current
+        return posts[0]?.id ?? ''
+      })
     })
   }, [open, initialPostId, posts])
 
-  useEffect(() => {
-    if (!open) {
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
       setRejectNote('')
     }
-  }, [open])
+    onOpenChange(next)
+  }
 
   const run = async (fn: () => ReturnType<typeof requestPostApproval>) => {
     if (!selectedId) return
@@ -124,7 +127,7 @@ export function PostApprovalDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="gap-4 w-[min(96vw,56rem)] max-w-[min(96vw,56rem)] sm:max-w-[min(96vw,56rem)]">
         <DialogHeader>
           <DialogTitle className="inline-flex items-center gap-2">

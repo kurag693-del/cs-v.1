@@ -8,10 +8,12 @@ import type {
 
 export type OpenAICompatibleProviderConfig = {
   baseURL: string
-  model: string
+  model: string | (() => string)
   providerId: AIProviderId
   /** Static key or getter so keys from `process.env` are read at request time. */
   apiKey: string | (() => string)
+  /** OpenRouter требует HTTP-Referer и X-Title; другие совместимые API могут игнорировать. */
+  extraHeaders?: Record<string, string> | (() => Record<string, string>)
 }
 
 type OpenAIChatCompletionResponse = {
@@ -21,6 +23,11 @@ type OpenAIChatCompletionResponse = {
     }
   }>
   model?: string
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
   error?: {
     message?: string
   }
@@ -54,7 +61,8 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   private readonly baseURL: string
   private readonly resolveApiKey: () => string
-  private readonly model: string
+  private readonly resolveModel: () => string
+  private readonly resolveExtraHeaders: (() => Record<string, string>) | undefined
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.id = config.providerId
@@ -65,7 +73,22 @@ export class OpenAICompatibleProvider implements AIProvider {
       const staticKey = config.apiKey
       this.resolveApiKey = () => staticKey
     }
-    this.model = config.model
+    if (typeof config.model === 'function') {
+      this.resolveModel = config.model
+    } else {
+      const staticModel = config.model
+      this.resolveModel = () => staticModel
+    }
+    if (config.extraHeaders) {
+      if (typeof config.extraHeaders === 'function') {
+        this.resolveExtraHeaders = config.extraHeaders
+      } else {
+        const h = config.extraHeaders
+        this.resolveExtraHeaders = () => h
+      }
+    } else {
+      this.resolveExtraHeaders = undefined
+    }
   }
 
   estimateTokens(params: AIProviderTokenEstimateParams): number {
@@ -80,18 +103,24 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
 
     const url = chatCompletionsUrl(this.baseURL)
+    const model = params.model?.trim() || this.resolveModel()
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    }
+    const extra = this.resolveExtraHeaders?.()
+    if (extra) {
+      Object.assign(headers, extra)
+    }
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
-        model: this.model,
+        model,
         messages: [{ role: 'user', content: params.prompt }],
         temperature: params.temperature,
         max_tokens: params.maxTokens,
-        response_mime_type: 'application/json',
       }),
     })
 
@@ -115,10 +144,24 @@ export class OpenAICompatibleProvider implements AIProvider {
       throw new AIProviderRequestError('Empty completion content', 502, 'server_error')
     }
 
+    const u = data.usage
+    const usage =
+      u && (u.total_tokens != null || u.prompt_tokens != null || u.completion_tokens != null)
+        ? {
+            promptTokens: Math.max(0, u.prompt_tokens ?? 0),
+            completionTokens: Math.max(0, u.completion_tokens ?? 0),
+            totalTokens: Math.max(
+              0,
+              u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0)
+            ),
+          }
+        : undefined
+
     return {
       content,
-      model: data.model ?? this.model,
+      model: data.model ?? model,
       provider: this.id,
+      usage,
     }
   }
 

@@ -2,6 +2,8 @@ import { prisma } from '@/lib/db'
 import { revalidatePath } from 'next/cache'
 import type { SubscriptionTier } from '@prisma/client'
 
+import { sumBillableCredits } from '@/lib/billing/credit-accounting'
+
 // Credit costs per action (in credits)
 export const CREDIT_COSTS = {
   TEXT_GENERATION: 1,
@@ -51,15 +53,8 @@ export async function checkCredits(userId: string): Promise<{
       }
     }
 
-    const used = await prisma.generation.count({
-      where: {
-        userId,
-        status: 'COMPLETED',
-        createdAt: {
-          gte: new Date(subscription.startsAt || subscription.createdAt),
-        },
-      },
-    })
+    const periodStart = new Date(subscription.startsAt || subscription.createdAt)
+    const used = await sumBillableCredits(userId, periodStart)
 
     const available = Math.max(0, subscription.generationLimit - used)
 
@@ -178,7 +173,11 @@ export async function getSubscriptionStatus(userId: string): Promise<{
   }
 }
 
-export async function consumeCredits(userId: string, amount: number, type: string): Promise<{ success: boolean; remaining: number }> {
+/**
+ * @deprecated Раньше создавалась запись `credit_consumption` и удваивался расход лимита.
+ * Кредиты считаются по записям Generation с `metadata.creditCost` (см. `credit-accounting.ts`).
+ */
+export async function consumeCredits(userId: string, amount: number, _type: string): Promise<{ success: boolean; remaining: number }> {
   try {
     const subscription = await prisma.subscription.findUnique({
       where: { userId },
@@ -188,37 +187,16 @@ export async function consumeCredits(userId: string, amount: number, type: strin
       return { success: false, remaining: 0 }
     }
 
-    const used = await prisma.generation.count({
-      where: {
-        userId,
-        status: 'COMPLETED',
-        createdAt: {
-          gte: new Date(subscription.startsAt || subscription.createdAt),
-        },
-      },
-    })
+    const periodStart = new Date(subscription.startsAt || subscription.createdAt)
+    const used = await sumBillableCredits(userId, periodStart)
+    const remaining = subscription.generationLimit - used
 
-    if (used + amount > subscription.generationLimit) {
-      return { success: false, remaining: subscription.generationLimit - used }
+    if (remaining < amount) {
+      return { success: false, remaining: Math.max(0, remaining) }
     }
 
-    await prisma.generation.create({
-      data: {
-        userId,
-        type: 'credit_consumption',
-        prompt: `Credit usage for ${type}`,
-        output: `Consumed ${amount} credits`,
-        status: 'COMPLETED',
-        model: 'system',
-        tokens: 0,
-        metadata: { type, amount, operation: 'debit' },
-      },
-    })
-
-    const remaining = subscription.generationLimit - used - amount
-
-    return { success: true, remaining }
-  } catch (err: any) {
+    return { success: true, remaining: remaining - amount }
+  } catch (err: unknown) {
     console.error('Consume credits error:', err)
     return { success: false, remaining: 0 }
   }

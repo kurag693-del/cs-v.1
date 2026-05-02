@@ -135,3 +135,12 @@ export async function getBuiltinTemplatePreferences(): Promise<{
     preferredId: p.preferredBuiltinTemplateId ?? null,
   }
 }
+
+/** Короткая подсказка для дашборда: основной встроенный шаблон. */
+export async function getPreferredTemplateDashboardHint(): Promise<{ id: string; name: string } | null> {
+  const prefs = await getBuiltinTemplatePreferences()
+  const id = prefs.preferredId
+  if (!id) return null
+  const t = getBuiltinTemplateById(id)
+  return t ? { id: t.id, name: t.name } : null
+}

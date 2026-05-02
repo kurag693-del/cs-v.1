@@ -13,6 +13,7 @@ import { EnqueuePublishJobSchema, type PublishTarget } from '@/lib/validation/pu
 import { getActiveCredentialForPublishing } from '@/lib/platform-credentials/actions'
 import { revalidatePath } from 'next/cache'
 import { getApprovalStatus } from '@/lib/approval/workflow'
+import { scheduleEngagementSyncAfterPublish } from '@/lib/analytics/engagement-after-publish'
 import { assertUserCanScheduleOrPublishPost } from '@/lib/workspace/publish-guard'
 
 function resolvePublishTarget(platform: string): PublishTarget {
@@ -316,6 +317,7 @@ export async function runPendingPublishJobs(userId: string, limit = 20) {
       }
       processedPosts += 1
       processedJobs += 1
+      scheduleEngagementSyncAfterPublish(post.id, userId, item.target)
       continue
     }
 

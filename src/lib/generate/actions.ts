@@ -7,6 +7,11 @@ import { routeModel, type GenerationTask, type RouteDecision } from '@/lib/ai/ro
 import type { GenerationResult } from '@/lib/ai/types'
 import { getConfiguredAIProviderIds, resolveEffectiveDefaultProvider } from '@/lib/ai/providers/availability'
 import { getAIProvider } from '@/lib/ai/providers/registry'
+import {
+  hasOpenRouterTextCatalog,
+  isOpenRouterTextModelAllowed,
+  pickOpenRouterTextModel,
+} from '@/lib/ai/model-catalog'
 import type { AIProviderId } from '@/lib/ai/providers/types'
 import { prisma } from '@/lib/db'
 import { buildPrompt, parseGenerationFromText, type PromptBuildInput } from '@/lib/generate/prompt-utils'
@@ -20,6 +25,8 @@ import { AB_VARIANT_LABELS, buildAbVariants } from '@/lib/ai/workflows/ab-varian
 import { generateAutoHashtags } from '@/lib/ai/workflows/hashtags'
 import { recycleContentForPlatforms, type RecycleTarget } from '@/lib/ai/workflows/recycle'
 import { getBuiltinTemplateById } from '@/lib/templates/builtin-templates'
+import { CREDIT_COSTS } from '@/lib/billing/actions'
+import { sumBillableCredits } from '@/lib/billing/credit-accounting'
 
 const GenerateInputSchema = z.object({
   type: z.enum(['social_post', 'blog_outline', 'ad_copy', 'image_prompt', 'feedback_optimizer', 'brand_voice']),
@@ -39,6 +46,7 @@ const GenerateInputSchema = z.object({
   recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
   templateId: z.string().min(1).max(80).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  textModel: z.string().min(1).max(200).optional(),
 })
 
 type GenerateTextPayload =
@@ -62,6 +70,7 @@ type GenerateTextPayload =
       templateId?: string
       type?: string
       metadata?: Record<string, unknown>
+      textModel?: string
     }
 
 function coerceVariantsCount(value: unknown): 1 | 2 | 3 {
@@ -106,6 +115,10 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
         return typeof raw === 'string' && raw.length > 0 ? raw : undefined
       })(),
       metadata: typeof metadataRaw === 'string' && metadataRaw.length > 0 ? (JSON.parse(metadataRaw) as Record<string, unknown>) : undefined,
+      textModel: (() => {
+        const raw = payload.get('textModel')
+        return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+      })(),
     }
   }
 
@@ -139,6 +152,7 @@ function normalizeGenerateInput(payload: GenerateTextPayload) {
     platformLabel: payload.platform ?? 'Instagram',
     templateId: payload.templateId,
     metadata: payload.metadata,
+    textModel: payload.textModel,
   }
 }
 
@@ -276,6 +290,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       recycleTargets: normalizedInput.recycleTargets,
       templateId: normalizedInput.templateId,
       metadata: normalizedInput.metadata,
+      textModel: normalizedInput.textModel,
     })
 
     if (!validated.success) {
@@ -304,6 +319,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       recycleTargets,
       templateId,
       metadata,
+      textModel,
     } = validated.data
 
     const configuredProviders = getConfiguredAIProviderIds()
@@ -328,16 +344,18 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
     }
 
     const dbProfile = await prisma.profile.findUnique({ where: { userId }, include: { user: true } })
-    const subscription = await prisma.subscription.findUnique({ where: { userId } })
+    let subscription = await prisma.subscription.findUnique({ where: { userId } })
     if (!subscription) {
       await prisma.subscription.create({
         data: { userId, tier: 'FREE', status: 'ACTIVE', generationLimit: 100, postLimit: 50 },
       })
+      subscription = await prisma.subscription.findUnique({ where: { userId } })
     }
 
-    const credits = subscription?.generationLimit ?? 100
-    const usedGenerations = await prisma.generation.count({ where: { userId, status: 'COMPLETED' } })
-    if (credits - usedGenerations <= 0) {
+    const periodStart = new Date(subscription!.startsAt ?? subscription!.createdAt)
+    const usedCredits = await sumBillableCredits(userId, periodStart)
+    const creditLimit = subscription!.generationLimit
+    if (creditLimit - usedCredits < CREDIT_COSTS.TEXT_GENERATION) {
       return { success: false, error: 'Insufficient credits. Please upgrade your plan.', code: 'INSUFFICIENT_CREDITS' }
     }
 
@@ -365,8 +383,24 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       return { success: false, error: `Content blocked: ${moderationResult.reason}`, code: 'CONTENT_BLOCKED' }
     }
 
-    const route: RouteDecision = routeModel(type as GenerationTask, subscription?.tier ?? 'FREE')
+    const tier = subscription?.tier ?? 'FREE'
+    const route: RouteDecision = routeModel(type as GenerationTask, tier)
     const aiProvider = getAIProvider(provider)
+
+    let textModelForRun: string
+    if (provider === 'openrouter') {
+      const want = textModel?.trim()
+      if (want && hasOpenRouterTextCatalog() && !isOpenRouterTextModelAllowed(want, tier)) {
+        return {
+          success: false,
+          error: 'Выбранная текстовая модель недоступна на вашем тарифе.',
+          code: 'VALIDATION_ERROR',
+        }
+      }
+      textModelForRun = pickOpenRouterTextModel(tier, route.model, want)
+    } else {
+      textModelForRun = route.model
+    }
 
     let brand = null
     if (brandId) {
@@ -418,7 +452,8 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         includeEmojis,
         variantsCount,
       },
-      brandVoiceData
+      brandVoiceData,
+      type as GenerationTask
     )
 
     const maxOutTokens =
@@ -427,7 +462,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         : route.maxTokens
 
     const estimatedTokens = aiProvider.estimateTokens({ prompt: enhancedPrompt, maxTokens: maxOutTokens })
-    const estimatedCost = calculateCost(estimatedTokens, route.model)
+    const estimatedCost = calculateCost(estimatedTokens, textModelForRun)
     const minLength = Math.max(300, Math.floor(maxLength * 0.6))
 
     const generation = await prisma.generation.create({
@@ -438,7 +473,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         type,
         prompt: enhancedPrompt,
         status: 'PROCESSING',
-        model: route.model,
+        model: textModelForRun,
         tokens: 0,
         metadata: ({
           moderation: moderationResult,
@@ -447,6 +482,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
           provider,
           estimatedCost,
           plannedVariants: variantsCount,
+          creditCost: CREDIT_COSTS.TEXT_GENERATION,
           ...(templateId ? { templateId } : {}),
           ...metadata,
         } as unknown) as Prisma.InputJsonValue,
@@ -460,6 +496,7 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       prompt: enhancedPrompt,
       temperature: route.temperature,
       maxTokens: maxOutTokens,
+      ...(provider === 'openrouter' ? { model: textModelForRun } : {}),
     })
     lastProviderResult = firstRaw
 
@@ -513,18 +550,26 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       })),
     })
 
+    const reported = lastProviderResult.usage
     const sumPromptTokenEst = Math.ceil(enhancedPrompt.length / 4)
+    const totalTokensUsed = reported?.totalTokens ?? estimatedTokens
+    const promptTokensUsed = reported?.promptTokens ?? sumPromptTokenEst
+    const completionTokensUsed =
+      reported?.completionTokens ?? Math.max(totalTokensUsed - promptTokensUsed, 0)
+    const actualCostUsd = calculateCost(totalTokensUsed, textModelForRun)
 
     await prisma.generation.update({
       where: { id: generation.id },
       data: {
         status: 'COMPLETED',
         output: generationOutputJson,
-        tokens: estimatedTokens,
+        tokens: totalTokensUsed,
         metadata: {
           ...(typeof generation.metadata === 'object' && generation.metadata ? generation.metadata : {}),
           completedAt: new Date(),
-          actualCost: estimatedCost,
+          estimatedCost,
+          actualCost: actualCostUsd,
+          tokenUsageReported: Boolean(reported),
           modelUsed: lastProviderResult?.model,
           provider: lastProviderResult?.provider,
           aiCalls: 1,
@@ -533,21 +578,25 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
       },
     })
 
+    const resolvedModelLabel = lastProviderResult?.model ?? textModelForRun
+    const resolvedProvider = lastProviderResult?.provider ?? provider
+
     trackTokenUsage(
       {
-        promptTokens: sumPromptTokenEst,
-        completionTokens: Math.max(estimatedTokens - sumPromptTokenEst, 0),
-        totalTokens: estimatedTokens,
+        promptTokens: promptTokensUsed,
+        completionTokens: completionTokensUsed,
+        totalTokens: totalTokensUsed,
       },
-      estimatedCost
+      actualCostUsd,
+      resolvedModelLabel
     )
     logAiCost({
       userId,
       generationId: generation.id,
-      provider: lastProviderResult!.provider,
-      model: lastProviderResult!.model,
-      totalTokens: estimatedTokens,
-      costUsd: estimatedCost,
+      provider: resolvedProvider,
+      model: resolvedModelLabel,
+      totalTokens: totalTokensUsed,
+      costUsd: actualCostUsd,
       correlationId,
       metadata: {
         task: type,
@@ -567,15 +616,15 @@ export async function generateText(payload: GenerateTextPayload): Promise<Genera
         variants,
         hashtags,
         recycledPosts,
-        model: lastProviderResult!.model,
-        provider: lastProviderResult!.provider,
+        model: resolvedModelLabel,
+        provider: resolvedProvider,
         tokens: {
-          promptTokens: sumPromptTokenEst,
-          completionTokens: Math.max(estimatedTokens - sumPromptTokenEst, 0),
-          totalTokens: estimatedTokens,
-          estimatedCostUSD: estimatedCost,
+          promptTokens: promptTokensUsed,
+          completionTokens: completionTokensUsed,
+          totalTokens: totalTokensUsed,
+          estimatedCostUSD: actualCostUsd,
         },
-        costUSD: estimatedCost,
+        costUSD: actualCostUsd,
       },
     }
   } catch (err: unknown) {

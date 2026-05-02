@@ -100,6 +100,7 @@ export default async function WorkspacePage({ searchParams }: PageProps) {
       </Card>
 
       <WorkspaceSettings
+        key={`${workspaceId}-${editorsCanPublish}`}
         workspaceId={workspaceId}
         workspaces={list.workspaces}
         initialMembers={membersRes.members}

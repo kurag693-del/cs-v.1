@@ -1,4 +1,5 @@
 import js from '@eslint/js'
+import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import eslintPluginNext from 'eslint-config-next'
 
@@ -6,6 +7,10 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...eslintPluginNext,
+  {
+    files: ['scripts/**/*.{cjs,mjs}'],
+    languageOptions: { globals: globals.node },
+  },
   {
     files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
     rules: {

@@ -10,6 +10,7 @@ describe('AI provider availability', () => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'sk-test')
     vi.stubEnv('YANDEX_GPT_API_KEY', '')
     vi.stubEnv('GIGACHAT_AUTH_KEY', '')
+    vi.stubEnv('OPENROUTER_API_KEY', '')
 
     const { getConfiguredAIProviderIds } = await import('@/lib/ai/providers/availability')
     expect(getConfiguredAIProviderIds()).toEqual(['deepseek'])
@@ -19,8 +20,18 @@ describe('AI provider availability', () => {
     vi.stubEnv('DEEPSEEK_API_KEY', '')
     vi.stubEnv('YANDEX_GPT_API_KEY', 'key')
     vi.stubEnv('YANDEX_GPT_FOLDER_ID', 'folder')
+    vi.stubEnv('OPENROUTER_API_KEY', '')
 
     const { getConfiguredAIProviderIds } = await import('@/lib/ai/providers/availability')
     expect(getConfiguredAIProviderIds()).toContain('yandexgpt')
+  })
+
+  it('includes OpenRouter when API key is set', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', '')
+    vi.stubEnv('YANDEX_GPT_API_KEY', '')
+    vi.stubEnv('OPENROUTER_API_KEY', 'sk-or')
+
+    const { getConfiguredAIProviderIds } = await import('@/lib/ai/providers/availability')
+    expect(getConfiguredAIProviderIds()).toContain('openrouter')
   })
 })

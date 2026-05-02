@@ -27,7 +27,7 @@ describe('phase 1 generation hardening', () => {
 
   it('keeps provider registry with required ids', () => {
     expect(AI_PROVIDER_IDS).toEqual(
-      expect.arrayContaining(['deepseek', 'gigachat', 'yandexgpt'])
+      expect.arrayContaining(['deepseek', 'gigachat', 'yandexgpt', 'openrouter'])
     )
   })
 

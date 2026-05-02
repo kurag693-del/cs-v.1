@@ -2,6 +2,7 @@
 
 import { prisma } from '@/lib/db'
 import { validateSession } from '@/lib/auth/lucia'
+import { NON_BILLABLE_GENERATION_TYPES } from '@/lib/billing/credit-accounting'
 
 export type OnboardingStepId = 'brand' | 'generation' | 'integration' | 'schedule'
 
@@ -31,7 +32,14 @@ export async function getOnboardingProgress(
   const [brandsCount, credentialsCount, generationsCount, scheduledOrPublishedCount] = await Promise.all([
     prisma.brand.count({ where: { userId, deletedAt: null } }),
     prisma.platformCredential.count({ where: { userId, deletedAt: null, isActive: true } }),
-    prisma.generation.count({ where: { userId, deletedAt: null, status: 'COMPLETED' } }),
+    prisma.generation.count({
+      where: {
+        userId,
+        deletedAt: null,
+        status: 'COMPLETED',
+        type: { notIn: [...NON_BILLABLE_GENERATION_TYPES] },
+      },
+    }),
     prisma.post.count({
       where: {
         userId,

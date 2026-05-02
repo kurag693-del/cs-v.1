@@ -3,10 +3,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, Copy, ImageIcon, Loader2, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import type { AIProviderId } from "@/lib/ai/providers/types";
+
+/** Дублирует форму из каталога моделей (без импорта server-модуля в клиент). */
+type OpenRouterModelPick = { slug: string; kind: "free" | "paid" };
 
 /** Для тестов: в development всегда; в prod — если NEXT_PUBLIC_SHOW_AI_SOURCE=true */
 const SHOW_AI_SOURCE =
@@ -17,6 +20,7 @@ import { saveGenerationAsDraft } from "@/lib/posts/actions";
 import { generateTextInputSchema as GenerateTextInputSchema, type GenerateTextInput } from "@/lib/validation/generate";
 import { ImageUploader } from "@/components/features/ImageUploader";
 import { TemplateSelector } from "@/components/features/TemplateSelector";
+import { UserContentTemplatesPanel } from "@/components/features/UserContentTemplatesPanel";
 import { setPreferredBuiltinTemplate, toggleFavoriteBuiltinTemplate } from "@/lib/templates/actions";
 import { getBuiltinTemplateById, getTemplateFormPatch, type BuiltinTemplate } from "@/lib/templates/builtin-templates";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -40,11 +44,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { MAX_MEDIA_FILES_PER_POST } from "@/lib/validation/media";
+import {
+  GENERATION_TASK_PRESETS,
+  getGenerationTaskPreset,
+} from "@/lib/generation/generation-task-presets";
+import { cn } from "@/lib/utils";
 
 const AI_PROVIDER_LABELS: Record<AIProviderId, string> = {
   deepseek: "DeepSeek (с fallback на GigaChat)",
   yandexgpt: "YandexGPT",
   gigachat: "GigaChat",
+  openrouter: "OpenRouter",
 };
 
 type BrandOption = {
@@ -66,6 +76,16 @@ type TextGeneratorFormProps = {
   templatePreferredId?: string | null;
   /** Загрузка файлов в S3 (иначе только ИИ/data URL). */
   allowFileUpload?: boolean;
+  /** Тариф для подписи «платная модель» в селекте. */
+  subscriptionTier?: "FREE" | "PRO" | "ENTERPRISE";
+  /** Slug'и OpenRouter для текста (из AI_TEXT_MODELS_FREE / _PAID). */
+  openRouterTextModels?: OpenRouterModelPick[];
+  /** Slug'и OpenRouter для картинок (из AI_IMAGE_MODELS_FREE / _PAID). */
+  openRouterImageModels?: OpenRouterModelPick[];
+  /** Показать выбор модели картинки, если в env IMAGE_GEN_BACKEND=openrouter. */
+  imageGenIsOpenRouter?: boolean;
+  /** Пространства для сохранения командных шаблонов. */
+  workspaces?: Array<{ id: string; name: string; role: string }>;
 };
 
 type GenerateRequestPayload = {
@@ -83,6 +103,14 @@ type GenerateRequestPayload = {
   enableRecycle: boolean;
   recycleTargets: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen">;
   templateId?: string;
+  textModel?: string;
+  generationType:
+    | "social_post"
+    | "blog_outline"
+    | "ad_copy"
+    | "image_prompt"
+    | "feedback_optimizer"
+    | "brand_voice";
 };
 
 export function TextGeneratorForm({
@@ -94,6 +122,11 @@ export function TextGeneratorForm({
   templateFavoriteIds = [],
   templatePreferredId = null,
   allowFileUpload = false,
+  subscriptionTier = "FREE",
+  openRouterTextModels = [],
+  openRouterImageModels = [],
+  imageGenIsOpenRouter = false,
+  workspaces = [],
 }: TextGeneratorFormProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -113,6 +146,16 @@ export function TextGeneratorForm({
   const [lastAiMeta, setLastAiMeta] = useState<{ provider: AIProviderId; model: string } | null>(null);
   const [selectedVariantId, setSelectedVariantId] = useState<"A" | "B" | "C">("A");
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [openRouterImageModelSlug, setOpenRouterImageModelSlug] = useState(
+    () => openRouterImageModels[0]?.slug ?? ""
+  );
+  const effectiveOpenRouterImageModelSlug = useMemo(() => {
+    if (openRouterImageModels.length === 0) return openRouterImageModelSlug;
+    if (openRouterImageModels.some((m) => m.slug === openRouterImageModelSlug)) {
+      return openRouterImageModelSlug;
+    }
+    return openRouterImageModels[0]!.slug;
+  }, [openRouterImageModels, openRouterImageModelSlug]);
   const recycleTargetOptions: Array<"Instagram" | "Telegram" | "VK" | "TikTok" | "Dzen"> = [
     "Instagram",
     "Telegram",
@@ -138,10 +181,13 @@ export function TextGeneratorForm({
       enableRecycle: false,
       recycleTargets: [],
       templateId: undefined,
+      textModel: undefined,
+      generationType: "social_post",
     },
   });
 
   const appliedTemplateId = useWatch({ control: form.control, name: "templateId" });
+  const selectedProvider = useWatch({ control: form.control, name: "provider" });
 
   useEffect(() => {
     if (!initialTemplateId) return;
@@ -209,6 +255,18 @@ export function TextGeneratorForm({
   const enableAbTest = useWatch({ control: form.control, name: "enableAbTest" });
   const enableRecycle = useWatch({ control: form.control, name: "enableRecycle" });
 
+  useEffect(() => {
+    if (selectedProvider !== "openrouter" || openRouterTextModels.length === 0) {
+      form.setValue("textModel", undefined);
+      return;
+    }
+    const first = openRouterTextModels[0]!.slug;
+    const current = form.getValues("textModel");
+    if (!current || !openRouterTextModels.some((m) => m.slug === current)) {
+      form.setValue("textModel", first);
+    }
+  }, [selectedProvider, openRouterTextModels, form]);
+
   const runGeneration = async (payload: GenerateRequestPayload) => {
     setIsGenerating(true);
     setError(null);
@@ -222,7 +280,11 @@ export function TextGeneratorForm({
     setLastRequest(payload);
 
     try {
-      const response = await generateText(payload);
+      const { generationType, ...restPayload } = payload;
+      const response = await generateText({
+        ...restPayload,
+        type: generationType,
+      });
 
       if (!response.success) {
         const message = response.error || "Не удалось сгенерировать текст";
@@ -285,6 +347,8 @@ export function TextGeneratorForm({
       enableRecycle: values.enableRecycle ?? false,
       recycleTargets: values.recycleTargets ?? [],
       templateId: values.templateId,
+      textModel: values.textModel,
+      generationType: values.generationType ?? "social_post",
     });
   };
 
@@ -331,6 +395,9 @@ export function TextGeneratorForm({
     try {
       const res = await generatePostRasterImage({
         prompt: `Иллюстрация для поста в соцсетях, без текста на картинке: ${topic}`,
+        ...(imageGenIsOpenRouter && openRouterImageModels.length > 0 && effectiveOpenRouterImageModelSlug
+          ? { imageModel: effectiveOpenRouterImageModelSlug }
+          : {}),
       });
       if (!res.success) {
         toast({
@@ -440,6 +507,10 @@ export function TextGeneratorForm({
                 onSetPreferred={handleSetPreferredTemplate}
                 disabled={isGenerating || noAiProviders}
               />
+              <UserContentTemplatesPanel
+                workspaces={workspaces}
+                disabled={isGenerating || noAiProviders}
+              />
               <FormField
                 control={form.control}
                 name="topic"
@@ -460,6 +531,78 @@ export function TextGeneratorForm({
                     <FormMessage />
                   </FormItem>
                 )}
+              />
+
+              <FormField
+                control={form.control}
+                name="generationType"
+                render={({ field }) => {
+                  const selected = getGenerationTaskPreset(field.value);
+                  return (
+                    <FormItem>
+                      <FormLabel>Что нужно получить?</FormLabel>
+                      <FormDescription className="mb-3">
+                        Выберите шаблон — так ИИ поймёт задачу. Не нужно разбираться в названиях полей.
+                      </FormDescription>
+                      <FormControl>
+                        <div
+                          className="grid gap-2 sm:grid-cols-2"
+                          role="radiogroup"
+                          aria-label="Тип результата генерации"
+                        >
+                          {GENERATION_TASK_PRESETS.map((preset) => {
+                            const isActive = (field.value ?? "social_post") === preset.value;
+                            return (
+                              <button
+                                key={preset.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={isActive}
+                                disabled={isGenerating || noAiProviders}
+                                onClick={() => field.onChange(preset.value)}
+                                className={cn(
+                                  "flex flex-col gap-1 rounded-lg border p-3 text-left text-sm transition-colors",
+                                  "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  isActive
+                                    ? "border-primary bg-primary/5 shadow-sm"
+                                    : "border-border bg-card",
+                                  (isGenerating || noAiProviders) && "pointer-events-none opacity-60"
+                                )}
+                              >
+                                <span className="font-medium leading-snug">{preset.title}</span>
+                                <span className="text-muted-foreground text-xs leading-relaxed">
+                                  {preset.description}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </FormControl>
+                      <details className="mt-3 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                        <summary className="cursor-pointer select-none font-medium text-foreground">
+                          Для продвинутых: как устроен ответ ИИ
+                        </summary>
+                        <div className="mt-2 space-y-2 text-muted-foreground">
+                          <p>
+                            Модель возвращает структурированный ответ с полями{" "}
+                            <span className="font-mono text-xs text-foreground">hook</span>,{" "}
+                            <span className="font-mono text-xs text-foreground">body</span>,{" "}
+                            <span className="font-mono text-xs text-foreground">hashtags</span>,{" "}
+                            <span className="font-mono text-xs text-foreground">cta</span>. В интерфейсе вы
+                            увидите уже собранный текст; имена полей нужны только если копируете в интеграции.
+                          </p>
+                          <p>
+                            <span className="font-medium text-foreground">
+                              Для «{selected.title}» эти поля означают:
+                            </span>{" "}
+                            {selected.expertHint}
+                          </p>
+                        </div>
+                      </details>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -557,6 +700,48 @@ export function TextGeneratorForm({
                   )}
                 />
               </div>
+
+              {selectedProvider === "openrouter" && openRouterTextModels.length > 0 ? (
+                <FormField
+                  control={form.control}
+                  name="textModel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Модель текста (OpenRouter)</FormLabel>
+                      <Select
+                        value={field.value ?? openRouterTextModels[0]?.slug ?? ""}
+                        onValueChange={field.onChange}
+                        disabled={isGenerating || noAiProviders}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Модель" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {openRouterTextModels.map((m) => (
+                            <SelectItem key={m.slug} value={m.slug}>
+                              <span className="font-mono text-xs">{m.slug}</span>
+                              {m.kind === "paid" ? (
+                                <span className="text-muted-foreground ml-2 text-xs">платная</span>
+                              ) : (
+                                <span className="text-muted-foreground ml-2 text-xs">бесплатная</span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Списки в{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-[11px]">AI_TEXT_MODELS_FREE</code> и{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-[11px]">AI_TEXT_MODELS_PAID</code>{" "}
+                        (порядок — приоритет и рост цены для платных).
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <FormField
@@ -780,6 +965,41 @@ export function TextGeneratorForm({
               />
 
               <div className="space-y-3 rounded-lg border border-dashed border-primary/25 bg-muted/30 p-4">
+                {imageGenIsOpenRouter && openRouterImageModels.length > 0 ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="openrouter-image-model">
+                      Модель изображения (OpenRouter)
+                    </label>
+                    <Select
+                      value={effectiveOpenRouterImageModelSlug}
+                      onValueChange={setOpenRouterImageModelSlug}
+                      disabled={noAiProviders || isGenerating || isGeneratingImage}
+                    >
+                      <SelectTrigger id="openrouter-image-model">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {openRouterImageModels.map((m) => (
+                          <SelectItem key={m.slug} value={m.slug}>
+                            <span className="font-mono text-xs">{m.slug}</span>
+                            {m.kind === "paid" ? (
+                              <span className="text-muted-foreground ml-2 text-xs">платная</span>
+                            ) : (
+                              <span className="text-muted-foreground ml-2 text-xs">бесплатная</span>
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-muted-foreground text-xs leading-relaxed">
+                      <code className="rounded bg-background px-1 py-0.5 text-[11px]">AI_IMAGE_MODELS_FREE</code> /{" "}
+                      <code className="rounded bg-background px-1 py-0.5 text-[11px]">AI_IMAGE_MODELS_PAID</code>
+                      {subscriptionTier === "FREE" ? (
+                        <span> — на тарифе FREE доступны только бесплатные slug&apos;и.</span>
+                      ) : null}
+                    </p>
+                  </div>
+                ) : null}
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-medium">Картинка к посту (ИИ)</p>

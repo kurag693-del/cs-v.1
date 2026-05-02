@@ -2,7 +2,17 @@ import { z } from 'zod'
 
 import { aiProviderIdSchema } from './ai-provider'
 
+const generationTaskSchema = z.enum([
+  'social_post',
+  'blog_outline',
+  'ad_copy',
+  'image_prompt',
+  'feedback_optimizer',
+  'brand_voice',
+])
+
 export const generateTextInputSchema = z.object({
+  generationType: generationTaskSchema.default('social_post'),
   topic: z.string().min(3, 'Тема должна содержать минимум 3 символа').max(500, 'Тема слишком длинная'),
   platform: z.enum(['Instagram', 'Telegram', 'VK', 'TikTok']),
   provider: aiProviderIdSchema.default('deepseek'),
@@ -18,6 +28,8 @@ export const generateTextInputSchema = z.object({
   recycleTargets: z.array(z.enum(['Instagram', 'Telegram', 'VK', 'TikTok', 'Dzen'])).default([]),
   /** Встроенный шаблон ниши; передаётся в server action вместе с формой. */
   templateId: z.string().min(1).max(80).optional(),
+  /** Slug модели OpenRouter; при пустом — первый из списка env или авто. */
+  textModel: z.string().min(1).max(200).optional(),
 })
 
 export type GenerateTextInput = z.input<typeof generateTextInputSchema>

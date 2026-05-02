@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
+import type { GenerationTask } from '@/lib/ai/router'
+
 export type PromptBuildInput = {
   topic: string
   platform: string
@@ -128,6 +130,20 @@ const TEXT_PROMPT_TEMPLATE = (() => {
   }
 })()
 
+/** Доп. инструкции под тип задачи; формат ответа тот же JSON hook/body/hashtags/cta для парсера. */
+const TASK_RUNTIME_DIRECTIVES: Partial<Record<GenerationTask, string>> = {
+  blog_outline: `## Задача: план статьи (блог)
+Верни **тот же JSON** (hook, body, hashtags, cta): hook = заголовок материала; body = структурированный план с подзаголовками и списками; без выдуманных фактов.`,
+  ad_copy: `## Задача: рекламный текст
+Тот же JSON: hook = цепляющий заголовок; body = оффер, выгоды, доказательства; cta = явное действие.`,
+  image_prompt: `## Задача: описание для генерации картинки
+Тот же JSON: hook = короткое название идеи; body = развёрнутое визуальное описание сцены (свет, стиль, объекты); hashtags по теме.`,
+  feedback_optimizer: `## Задача: улучшение текста
+Тот же JSON: перепиши и усиль формулировки по теме запроса; сохрани факты, не добавляй выдумок.`,
+  brand_voice: `## Задача: карточка голоса бренда
+Тот же JSON: hook = условное имя профиля; body = правила тона, лексики, структуры и запретов (компактно, по пунктам); cta = как применять.`,
+}
+
 export function parseGenerationFromText(raw: string): ParsedGenerated {
   const normalizedRaw = stripMarkdown(raw)
   const jsonCandidate = (() => {
@@ -205,7 +221,11 @@ export function parseGenerationFromText(raw: string): ParsedGenerated {
   }
 }
 
-export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, unknown> | null): string {
+export function buildPrompt(
+  input: PromptBuildInput,
+  brandVoice: Record<string, unknown> | null,
+  taskType: GenerationTask = 'social_post'
+): string {
   let prompt = TEXT_PROMPT_TEMPLATE
   const toneMap: Record<PromptBuildInput['toneOverride'], string> = {
     brand: 'по голосу бренда',
@@ -276,7 +296,9 @@ export function buildPrompt(input: PromptBuildInput, brandVoice: Record<string, 
 `
       : ''
 
-  return `## Critical Runtime Directives
+  const taskBlock = TASK_RUNTIME_DIRECTIVES[taskType] ?? ''
+
+  return `${taskBlock ? `${taskBlock}\n\n` : ''}## Critical Runtime Directives
 - Строго используй тип контента: ${contentTypeMap[input.contentType]}.
 - Строго используй тон: ${toneMap[input.toneOverride]}.
 - Эмодзи: ${input.includeEmojis ? 'можно умеренно' : 'запрещены полностью'}.
@@ -291,34 +313,3 @@ ${multi}
 `
 }
 
-/**
- * Второй/третий независимый вызов модели: тот же базовый шаблон + жёсткие анти-дубликаты
- * с фрагментами уже сгенерированных вариантов.
- */
-export function buildAlternativeSocialPostPrompt(
-  basePrompt: string,
-  input: { variantLetter: 'B' | 'C'; peerExcerpts: string[] }
-): string {
-  const blocks = input.peerExcerpts
-    .map((excerpt, i) => {
-      const label = String.fromCharCode(65 + i)
-      const clipped = excerpt.trim().slice(0, 520)
-      return `Черновик ${label} (фрагмент — не копируй целиком и не повторяй дословно):\n${clipped}`
-    })
-    .join('\n\n')
-
-  return `${basePrompt}
-
----
-ОТДЕЛЬНЫЙ ЗАПРОС — ВАРИАНТ ${input.variantLetter}:
-Это новый ответ модели на ту же тему и платформу. Формат выхода — как в инструкции выше (JSON с hook, body, hashtags, cta и др., если требовалось).
-
-Обязательно:
-- Другой hook и иное начало body по смыслу и формулировкам (не перефраз черновика A).
-- Другая структура абзацев и другие примеры там, где уместно.
-- Не повторяй целые предложения из фрагментов ниже.
-
-${blocks}
-
-Верни только ответ в том же формате (JSON), без пояснений до и после.`
-}

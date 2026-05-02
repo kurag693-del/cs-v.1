@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { WorkspaceMemberRole } from "@prisma/client";
 
@@ -68,9 +68,6 @@ export function WorkspaceSettings({
   const { toast } = useToast();
   const [members, setMembers] = useState(initialMembers);
   const [editorsCanPublish, setEditorsCanPublish] = useState(initialEditorsCanPublish);
-  useEffect(() => {
-    setEditorsCanPublish(initialEditorsCanPublish);
-  }, [initialEditorsCanPublish, workspaceId]);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"ADMIN" | "EDITOR" | "VIEWER">("EDITOR");
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);

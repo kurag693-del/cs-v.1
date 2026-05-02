@@ -29,12 +29,17 @@ export function isYandexGptConfigured(): boolean {
   return Boolean(modelUri || folderId)
 }
 
+export function isOpenRouterConfigured(): boolean {
+  return Boolean(process.env.OPENROUTER_API_KEY?.trim())
+}
+
 /** Провайдеры, для которых в `process.env` заданы обязательные креды. */
 export function getConfiguredAIProviderIds(): AIProviderId[] {
   const flags: Record<AIProviderId, boolean> = {
     deepseek: isDeepseekConfigured(),
     gigachat: isGigaChatConfigured(),
     yandexgpt: isYandexGptConfigured(),
+    openrouter: isOpenRouterConfigured(),
   }
   return AI_PROVIDER_ID_VALUES.filter((id) => flags[id])
 }

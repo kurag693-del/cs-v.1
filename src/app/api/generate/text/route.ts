@@ -1,5 +1,5 @@
 import { withRateLimit } from '@/lib/api/rate-limit'
-import { consumeCredits } from '@/lib/billing/actions'
+import { getCreditsRemaining } from '@/lib/billing/credit-accounting'
 import { generateText } from '@/lib/generate/actions'
 import { fail, ok } from '@/lib/api/response'
 
@@ -29,16 +29,11 @@ export async function POST(request: Request) {
       return fail(result.error ?? 'Generation failed', 400, 'GENERATION_FAILED')
     }
 
-    // Consume credits (1 credit per generation)
-    const creditResult = await consumeCredits(userId, 1, 'text-generation')
-
-    if (!creditResult.success) {
-      return fail(`Insufficient credits. Remaining: ${creditResult.remaining}`, 402, 'INSUFFICIENT_CREDITS')
-    }
+    const { remaining } = await getCreditsRemaining(userId)
 
     return ok({
       ...result.data,
-      creditsRemaining: creditResult.remaining,
+      creditsRemaining: remaining,
     })
   })
 }

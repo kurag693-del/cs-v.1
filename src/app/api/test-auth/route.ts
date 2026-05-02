@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        mode: 'supabase',
+        mode: 'error',
         user: null,
         error: error instanceof Error ? error.message : 'Unexpected auth check error',
         headers: {

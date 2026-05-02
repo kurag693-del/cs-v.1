@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  getOpenRouterImageModelOptions,
+  getOpenRouterTextModelOptions,
+} from "@/lib/ai/model-catalog";
+import {
   getConfiguredAIProviderIds,
   pickDefaultProviderForUi,
   resolveEffectiveDefaultProvider,
@@ -15,7 +19,9 @@ import {
 import { resolveConfiguredDefaultProviderId } from "@/lib/ai/providers/registry";
 import { validateSession } from "@/lib/auth/lucia";
 import { getBrands } from "@/lib/brands/actions";
+import { prisma } from "@/lib/db";
 import { getBuiltinTemplatePreferences } from "@/lib/templates/actions";
+import { listMyWorkspaces } from "@/lib/workspace/actions";
 
 type GeneratePageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -41,6 +47,10 @@ export default async function GeneratePage({ searchParams }: GeneratePageProps) 
   const brands = brandsResult.success ? brandsResult.data ?? [] : [];
 
   const templatePrefs = await getBuiltinTemplatePreferences();
+  const workspaceList = await listMyWorkspaces();
+  const workspaceOptions = workspaceList.success
+    ? workspaceList.workspaces.map((w) => ({ id: w.id, name: w.name, role: w.role }))
+    : [];
 
   const availableAiProviders = getConfiguredAIProviderIds();
   const defaultAiProvider =
@@ -50,6 +60,13 @@ export default async function GeneratePage({ searchParams }: GeneratePageProps) 
   const allowFileUpload = Boolean(
     process.env.S3_BUCKET?.trim() && process.env.S3_PUBLIC_URL?.trim()
   );
+
+  const subscription = await prisma.subscription.findUnique({ where: { userId } });
+  const subscriptionTier = subscription?.tier ?? "FREE";
+  const openRouterTextModels = getOpenRouterTextModelOptions(subscriptionTier);
+  const openRouterImageModels = getOpenRouterImageModelOptions(subscriptionTier);
+  const imageGenIsOpenRouter =
+    process.env.IMAGE_GEN_BACKEND?.trim().toLowerCase() === "openrouter";
 
   return (
     <div className="space-y-5">
@@ -125,6 +142,11 @@ export default async function GeneratePage({ searchParams }: GeneratePageProps) 
           templateFavoriteIds={templatePrefs.favoriteIds}
           templatePreferredId={templatePrefs.preferredId}
           allowFileUpload={allowFileUpload}
+          subscriptionTier={subscriptionTier}
+          openRouterTextModels={openRouterTextModels}
+          openRouterImageModels={openRouterImageModels}
+          imageGenIsOpenRouter={imageGenIsOpenRouter}
+          workspaces={workspaceOptions}
         />
       </div>
     </div>

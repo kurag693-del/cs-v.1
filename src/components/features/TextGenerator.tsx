@@ -26,6 +26,7 @@ const AI_PROVIDER_LABELS: Record<AIProviderId, string> = {
   deepseek: "DeepSeek (fallback → GigaChat)",
   yandexgpt: "YandexGPT",
   gigachat: "GigaChat",
+  openrouter: "OpenRouter",
 };
 
 type TextGeneratorProps = {

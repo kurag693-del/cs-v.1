@@ -9,6 +9,7 @@ import {
   type AIProviderTokenEstimateParams,
 } from './types'
 import { YandexGPTProvider } from './yandexgpt-provider'
+import { openrouterProvider } from './openrouter-provider'
 
 /** Ordered fallback when the logical entry is `deepseek` (DeepSeek → GigaChat). */
 export const AI_PROVIDER_FALLBACK_CHAIN: readonly AIProviderId[] = ['deepseek', 'gigachat']
@@ -59,6 +60,7 @@ const defaultProviders: Record<AIProviderId, AIProvider> = {
   deepseek: new ProviderFallbackChain('deepseek', [deepseekProvider, gigachatProvider]),
   gigachat: gigachatProvider,
   yandexgpt: new YandexGPTProvider(),
+  openrouter: openrouterProvider,
 }
 
 export class AIProviderRegistry {

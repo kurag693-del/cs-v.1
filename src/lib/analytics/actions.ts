@@ -1,6 +1,10 @@
 'use server'
 
 import { prisma } from '@/lib/db'
+import {
+  postEngagementSnapshotSchema,
+  type ChannelMetricRow,
+} from '@/lib/analytics/engagement-types'
 import { Platform } from '@prisma/client'
 import { validateSession } from '@/lib/auth/lucia'
 import { buildRecommendations } from '@/lib/analytics/recommendations'
@@ -251,4 +255,36 @@ export async function getDashboardRecommendations(userIdParam?: string): Promise
       error: { message: error instanceof Error ? error.message : 'Не удалось рассчитать рекомендации' },
     }
   }
+}
+
+/** Опубликованные посты с последним снимком метрик канала (фаза 11). */
+export async function listPublishedPostsChannelMetrics(userId: string): Promise<ChannelMetricRow[]> {
+  const posts = await prisma.post.findMany({
+    where: { userId, status: 'PUBLISHED', deletedAt: null },
+    orderBy: { publishedAt: 'desc' },
+    take: 40,
+    select: {
+      id: true,
+      platform: true,
+      publishedAt: true,
+      content: true,
+      metadata: true,
+    },
+  })
+
+  return posts.map((p) => {
+    const meta =
+      p.metadata && typeof p.metadata === 'object' && !Array.isArray(p.metadata)
+        ? (p.metadata as Record<string, unknown>)
+        : {}
+    const engRaw = meta.engagement
+    const parsed = postEngagementSnapshotSchema.safeParse(engRaw)
+    return {
+      postId: p.id,
+      platform: p.platform,
+      publishedAt: p.publishedAt ? p.publishedAt.toISOString() : null,
+      excerpt: p.content.trim().slice(0, 120) + (p.content.length > 120 ? '…' : ''),
+      engagement: parsed.success ? parsed.data : null,
+    }
+  })
 }

@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, CalendarDays, Loader2, Sparkles, Wand2 } from "lucide-react";
+import { AlertCircle, Bookmark, CalendarDays, Loader2, Sparkles, Wand2 } from "lucide-react";
 
 import { getAnalyticsSummary, getDashboardData } from "@/lib/analytics/actions";
 import { useSession } from "@/lib/auth/hooks";
 import { getOnboardingProgress } from "@/lib/onboarding/actions";
+import { getPreferredTemplateDashboardHint } from "@/lib/templates/actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -135,6 +136,7 @@ export default function DashboardPage() {
   const [isGenerating, startGenerating] = useTransition();
   const [recommendations, setRecommendations] = useState<DashboardRecommendations | null>(null);
   const [onboardingState, setOnboardingState] = useState<OnboardingBannerState | null>(null);
+  const [preferredTemplate, setPreferredTemplate] = useState<{ id: string; name: string } | null>(null);
   const { user, loading: sessionLoading } = useSession();
   const userId = useMemo(() => user?.id ?? parseUserIdFromStorage(), [user]);
 
@@ -153,10 +155,11 @@ export default function DashboardPage() {
       }
 
       setIsLoading(true);
-      const [result, recommendationsResult, onboardingResult] = await Promise.all([
+      const [result, recommendationsResult, onboardingResult, preferredTpl] = await Promise.all([
         getDashboardData(userId),
         getAnalyticsSummary(),
         getOnboardingProgress(userId),
+        getPreferredTemplateDashboardHint(),
       ]);
 
       if (!isActive) return;
@@ -179,6 +182,8 @@ export default function DashboardPage() {
           isCompleted: onboardingResult.data.isCompleted,
         });
       }
+
+      setPreferredTemplate(preferredTpl);
 
       setIsLoading(false);
     };
@@ -316,6 +321,23 @@ export default function DashboardPage() {
             </span>
             <Button asChild size="sm" variant="outline">
               <Link href="/onboarding">Открыть онбординг</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {preferredTemplate ? (
+        <Alert>
+          <Bookmark className="h-4 w-4" />
+          <AlertTitle>Продолжить с основного шаблона</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Выбран «{preferredTemplate.name}» — откройте генератор с этой нишей или смените основной в библиотеке.
+            </span>
+            <Button asChild size="sm" variant="default">
+              <Link href={`/dashboard/generate?template=${encodeURIComponent(preferredTemplate.id)}`}>
+                Открыть генерацию
+              </Link>
             </Button>
           </AlertDescription>
         </Alert>

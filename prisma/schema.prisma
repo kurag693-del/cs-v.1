@@ -113,7 +113,8 @@ model User {
   ownedWorkspaces   Workspace[]         @relation("WorkspaceOwner")
   workspaceMembers  WorkspaceMember[]
   workspaceInvitesCreated WorkspaceInvite[] @relation("WorkspaceInviteCreator")
-  
+  userContentTemplates     UserContentTemplate[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime? // Soft delete
@@ -134,6 +135,7 @@ model Workspace {
   members  WorkspaceMember[]
   invites  WorkspaceInvite[]
   brands   Brand[]
+  userContentTemplates UserContentTemplate[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -184,6 +186,26 @@ model WorkspaceInvite {
 
   @@index([workspaceId, emailNorm])
   @@index([expiresAt])
+}
+
+/** Пользовательские / командные шаблоны ниш (фаза 9+). */
+model UserContentTemplate {
+  id          String   @id @default(cuid())
+  /** null = только у автора; иначе виден участникам workspace. */
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  creator     User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  name        String
+  /** Снимок полей ниши (валидация в приложении). */
+  payload     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@index([workspaceId])
+  @@index([createdById])
+  @@index([deletedAt])
 }
 
 model Session {

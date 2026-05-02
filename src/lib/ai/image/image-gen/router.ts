@@ -1,11 +1,12 @@
 import { generateImageViaHttp } from '@/lib/ai/image/image-gen/http-provider'
 import { generateMockImageDataUrl } from '@/lib/ai/image/image-gen/mock-provider'
 import type { GeneratedImageResult, ImageGenBackendId } from '@/lib/ai/image/image-gen/types'
-import { generateImageYandexArtStub } from '@/lib/ai/image/image-gen/yandex-art-stub'
+import { generateImageOpenRouter } from '@/lib/ai/image/image-gen/openrouter-image-gen'
+import { generateImageYandexArt } from '@/lib/ai/image/image-gen/yandex-art-gen'
 
 function resolveBackend(): ImageGenBackendId {
   const raw = process.env.IMAGE_GEN_BACKEND?.trim().toLowerCase()
-  if (raw === 'http' || raw === 'yandex_art' || raw === 'mock') {
+  if (raw === 'http' || raw === 'yandex_art' || raw === 'mock' || raw === 'openrouter') {
     return raw
   }
   return 'mock'
@@ -15,6 +16,7 @@ export type GenerateImageInput = {
   prompt: string
   width?: number
   height?: number
+  imageModel?: string
 }
 
 /**
@@ -40,7 +42,9 @@ export async function generateRasterImage(input: GenerateImageInput): Promise<Ge
       })
     }
     case 'yandex_art':
-      return generateImageYandexArtStub(input.prompt)
+      return generateImageYandexArt(input.prompt, width, height)
+    case 'openrouter':
+      return generateImageOpenRouter(input.prompt, width, height, input.imageModel)
     default: {
       const _exhaustive: never = backend
       return _exhaustive
